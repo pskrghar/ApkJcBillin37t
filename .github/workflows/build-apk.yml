@@ -12,7 +12,7 @@ on:
       build_variant:
         description: 'Select APK build variant'
         required: true
-        default: 'both'
+        default: 'debug'
         type: choice
         options:
           - debug
@@ -28,11 +28,13 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      BUILD_VARIANT: ${{ github.event.inputs.build_variant || 'both' }}
+      BUILD_VARIANT: ${{ github.event.inputs.build_variant || 'debug' }}
       HAS_ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
-      # 1. Checkout Repository
+      # 1. Checkout source code
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -46,18 +48,38 @@ jobs:
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '21'
 
-      # 4. Setup Android SDK
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      # 4. Configure preinstalled Android SDK
+      - name: Configure Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-      # 5. Install npm Dependencies
+          if [ ! -d "$ANDROID_HOME" ]; then
+            echo "Android SDK directory not found"
+            exit 1
+          fi
+
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "SDK Manager not found"
+            exit 1
+          fi
+
+          echo "Using SDK Manager: $SDKMANAGER"
+
+          yes | "$SDKMANAGER" --licenses || true
+
+          "$SDKMANAGER" --install "platform-tools"
+
+      # 5. Install Node dependencies
       - name: Install Dependencies
         run: npm install
 
-      # 6. Build Web Application
+      # 6. Build web app and sync Capacitor
       - name: Build Web Bundle and Sync Capacitor
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -66,7 +88,7 @@ jobs:
           node scripts/generate-android-assets.js
           npx cap sync android
 
-      # 7. Decode Release Keystore
+      # 7. Decode release keystore
       - name: Decode Release Keystore
         id: keystore
         if: env.HAS_ANDROID_KEYSTORE == 'true'
@@ -76,7 +98,7 @@ jobs:
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/release-key.jks
           echo "has_keystore=true" >> "$GITHUB_OUTPUT"
 
-      # 8. Make Gradle Wrapper Executable
+      # 8. Make Gradle executable
       - name: Make Gradle Wrapper Executable
         run: chmod +x android/gradlew
 
