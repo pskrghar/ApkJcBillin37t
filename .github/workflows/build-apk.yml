@@ -34,28 +34,33 @@ jobs:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
-      # 1. Checkout source code
+      # 1. Checkout Repository
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. Setup Node.js
-      - name: Setup Node.js 20
+      # 2. Setup Node.js 22
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
-      # 3. Setup Java
+      # 3. Verify Node.js and npm
+      - name: Verify Node and npm
+        run: |
+          node --version
+          npm --version
+
+      # 4. Setup Java 21
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      # 4. Configure preinstalled Android SDK
+      # 5. Configure Android SDK
       - name: Configure Android SDK
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "Android SDK: $ANDROID_HOME"
 
           if [ ! -d "$ANDROID_HOME" ]; then
             echo "Android SDK directory not found"
@@ -72,14 +77,13 @@ jobs:
           echo "Using SDK Manager: $SDKMANAGER"
 
           yes | "$SDKMANAGER" --licenses || true
-
           "$SDKMANAGER" --install "platform-tools"
 
-      # 5. Install Node dependencies
+      # 6. Install npm Dependencies
       - name: Install Dependencies
         run: npm install
 
-      # 6. Build web app and sync Capacitor
+      # 7. Build Web Bundle and Sync Capacitor
       - name: Build Web Bundle and Sync Capacitor
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -88,7 +92,7 @@ jobs:
           node scripts/generate-android-assets.js
           npx cap sync android
 
-      # 7. Decode release keystore
+      # 8. Decode Release Keystore
       - name: Decode Release Keystore
         id: keystore
         if: env.HAS_ANDROID_KEYSTORE == 'true'
@@ -98,18 +102,18 @@ jobs:
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/release-key.jks
           echo "has_keystore=true" >> "$GITHUB_OUTPUT"
 
-      # 8. Make Gradle executable
+      # 9. Make Gradle Executable
       - name: Make Gradle Wrapper Executable
         run: chmod +x android/gradlew
 
-      # 9. Build Debug APK
+      # 10. Build Debug APK
       - name: Build Debug APK
         if: env.BUILD_VARIANT != 'release'
         run: |
           cd android
           ./gradlew assembleDebug --stacktrace
 
-      # 10. Build Release APK
+      # 11. Build Release APK
       - name: Build Release APK
         if: env.BUILD_VARIANT != 'debug'
         env:
@@ -121,7 +125,7 @@ jobs:
           cd android
           ./gradlew assembleRelease --stacktrace
 
-      # 11. Upload Debug APK
+      # 12. Upload Debug APK
       - name: Upload Debug APK
         if: env.BUILD_VARIANT != 'release'
         uses: actions/upload-artifact@v4
@@ -131,7 +135,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # 12. Upload Release APK
+      # 13. Upload Release APK
       - name: Upload Release APK
         if: env.BUILD_VARIANT != 'debug'
         uses: actions/upload-artifact@v4
