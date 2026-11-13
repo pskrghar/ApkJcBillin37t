@@ -1,0 +1,10 @@
+{
+  "name": "Remix JCBillingV3.7",
+  "description": "This stable version of v 3.7t, Working  , now I am developing apk version of it",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

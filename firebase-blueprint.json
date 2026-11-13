@@ -1,0 +1,124 @@
+{
+  "entities": {
+    "cloud_backups": {
+      "title": "Cloud Backups",
+      "description": "Full snapshots and backup archives of billing manifests and configurations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "manifestCount": { "type": "number" },
+        "folderCount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "itemCount": { "type": "number" },
+        "description": { "type": "string" },
+        "data": { "type": "object" }
+      },
+      "required": ["id", "name", "type", "createdAt", "updatedAt"]
+    },
+    "cloud_manifests": {
+      "title": "Cloud Manifests",
+      "description": "Synced individual manifest records",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "manifestNo": { "type": "string" },
+        "manifestDate": { "type": "string" },
+        "folderId": { "type": "string" },
+        "itemCount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "rows": { "type": "array" },
+        "config": { "type": "object" }
+      },
+      "required": ["id", "manifestNo", "manifestDate", "itemCount", "totalAmount"]
+    },
+    "cloud_folders": {
+      "title": "Cloud Folders",
+      "description": "Folder hierarchy for organizing manifests",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "name", "createdAt"]
+    },
+    "cloud_settings": {
+      "title": "Cloud Settings",
+      "description": "Global billing configurations and sync preferences",
+      "type": "object",
+      "properties": {
+        "globalConfig": { "type": "object" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["updatedAt"]
+    },
+    "cloud_devices": {
+      "title": "Cloud Devices",
+      "description": "Connected multi-device presence records for mobile, tablet, and PC",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "browser": { "type": "string" },
+        "os": { "type": "string" },
+        "channelKey": { "type": "string" },
+        "lastActive": { "type": "number" },
+        "manifestCount": { "type": "number" }
+      },
+      "required": ["id", "name", "type", "channelKey", "lastActive"]
+    },
+    "cloud_captured_sessions": {
+      "title": "Cloud Captured Sessions",
+      "description": "Backed up sessions of sequentially captured manifest pages for extraction resilience",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sessionNumber": { "type": "number" },
+        "channelKey": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "pageCount": { "type": "number" },
+        "status": { "type": "string" },
+        "extractionError": { "type": "string" },
+        "resultManifestNo": { "type": "string" },
+        "resultManifestId": { "type": "string" },
+        "pages": { "type": "array" }
+      },
+      "required": ["id", "channelKey", "createdAt", "pageCount", "status"]
+    }
+  },
+  "firestore": {
+    "/cloud_backups/{backupId}": {
+      "schema": "cloud_backups",
+      "description": "Full snapshots and backup archives"
+    },
+    "/cloud_manifests/{manifestId}": {
+      "schema": "cloud_manifests",
+      "description": "Synced individual manifest records"
+    },
+    "/cloud_folders/{folderId}": {
+      "schema": "cloud_folders",
+      "description": "Folder hierarchy for organizing manifests"
+    },
+    "/cloud_settings/{settingId}": {
+      "schema": "cloud_settings",
+      "description": "Global billing configurations and sync preferences"
+    },
+    "/cloud_devices/{deviceId}": {
+      "schema": "cloud_devices",
+      "description": "Connected multi-device presence records"
+    },
+    "/cloud_captured_sessions/{sessionId}": {
+      "schema": "cloud_captured_sessions",
+      "description": "Backed up sessions of sequentially captured manifest pages"
+    }
+  }
+}

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Remix JCBillingV3</title>
+    <meta name="description" content="Upgraded Smart Billing and Manifest OCR Scanner with offline persistence, camera queue, and multi-device sync.">
+    <meta property="og:title" content="Remix JCBillingV3">
+    <meta property="og:description" content="Upgraded Smart Billing and Manifest OCR Scanner with offline persistence, camera queue, and multi-device sync.">
+    
+    <!-- PWA & Mobile Web Standards (Zero External CDNs) -->
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" type="image/svg+xml" href="/icon.svg">
+    <link rel="alternate icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta name="theme-color" content="#1e1b4b">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="JCBilling">
+
+    <script>
+      try {
+        const savedPrefs = localStorage.getItem('smart_billing_user_prefs');
+        if (savedPrefs) {
+          const parsed = JSON.parse(savedPrefs);
+          if (parsed.theme === 'dark') {
+            document.documentElement.classList.add('dark');
+          } else if (parsed.theme === 'reading') {
+            document.documentElement.classList.add('reading');
+          }
+        }
+      } catch (e) {}
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f9fafb;
+        }
+
+        @media print {
+            body { background-color: white !important; }
+            nav, button, label, .no-print, .plus-icon, .trash-icon, .cog-icon {
+                display: none !important;
+            }
+            main { padding: 0 !important; margin: 0 !important; max-width: 100% !important; }
+            .shadow-2xl, .shadow-sm, .shadow-xl { box-shadow: none !important; }
+            .bg-indigo-950 { background-color: #1e1b4b !important; -webkit-print-color-adjust: exact; }
+            .text-white { color: white !important; }
+            .rounded-[3rem], .rounded-[4rem], .rounded-[2.5rem] { border-radius: 0.5rem !important; }
+            table { width: 100% !important; border-collapse: collapse !important; }
+            th, td { border-bottom: 1px solid #e5e7eb !important; }
+            .fixed, .sticky { position: static !important; }
+            input, select { 
+              border: none !important; 
+              background: transparent !important; 
+              appearance: none !important;
+              color: inherit !important;
+            }
+        }
+    </style>
+  <script type="module" crossorigin src="/assets/index-BpP8Zr2j.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CUDhuDez.css">
+<link rel="manifest" href="/manifest.webmanifest"></head>
+<body>
+    <div id="root"></div>
+</body>
+</html>

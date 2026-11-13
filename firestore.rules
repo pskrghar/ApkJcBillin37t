@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /cloud_backups/{backupId} {
+      allow read, write: if true;
+    }
+    match /cloud_manifests/{manifestId} {
+      allow read, write: if true;
+    }
+    match /cloud_folders/{folderId} {
+      allow read, write: if true;
+    }
+    match /cloud_settings/{settingId} {
+      allow read, write: if true;
+    }
+    match /cloud_devices/{deviceId} {
+      allow read, write: if true;
+    }
+    match /cloud_captured_sessions/{sessionId} {
+      allow read, write: if true;
+    }
+  }
+}

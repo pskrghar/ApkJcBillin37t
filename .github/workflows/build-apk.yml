@@ -1,0 +1,98 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      build_variant:
+        description: 'APK build variant'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - debug
+          - release
+          - both
+
+jobs:
+  build-android-apk:
+    name: Build JCBilling Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Java 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Web Bundle & Sync Capacitor Android
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          npm run build
+          node scripts/generate-android-assets.js
+          npx cap sync android
+
+      - name: Decode Release Keystore (if configured)
+        id: keystore
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/release-key.jks
+          echo "has_keystore=true" >> "$GITHUB_OUTPUT"
+
+      - name: Make Gradle Wrapper Executable
+        run: chmod +x android/gradlew
+
+      - name: Build Debug APK
+        if: ${{ inputs.build_variant != 'release' }}
+        run: |
+          cd android
+          ./gradlew assembleDebug
+
+      - name: Build Release APK (Signed if keystore secret exists)
+        if: ${{ inputs.build_variant != 'debug' }}
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.has_keystore == 'true' && 'release-key.jks' || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          cd android
+          ./gradlew assembleRelease
+
+      - name: Upload Debug APK Artifact
+        if: ${{ inputs.build_variant != 'release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: JCBilling-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: Upload Release APK Artifact
+        if: ${{ inputs.build_variant != 'debug' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: JCBilling-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30

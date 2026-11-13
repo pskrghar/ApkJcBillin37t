@@ -1,0 +1,35 @@
+import type { CapacitorConfig } from '@capacitor/cli';
+
+const config: CapacitorConfig = {
+  appId: 'com.jcbilling.smartapp',
+  appName: 'JCBilling',
+  webDir: 'dist',
+  server: {
+    androidScheme: 'https',
+    cleartext: false,
+  },
+  android: {
+    allowMixedContent: false,
+    captureInput: true,
+    webContentsDebuggingEnabled: false,
+  },
+  plugins: {
+    SplashScreen: {
+      launchShowDuration: 1400,
+      launchAutoHide: true,
+      backgroundColor: '#090d16',
+      androidSplashResourceName: 'splash',
+      androidScaleType: 'CENTER_CROP',
+      showSpinner: false,
+      splashFullScreen: false,
+      splashImmersive: false,
+    },
+    StatusBar: {
+      overlaysWebView: false,
+      backgroundColor: '#1e1b4b',
+      style: 'DARK',
+    },
+  },
+};
+
+export default config;

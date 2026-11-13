@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">JCBilling</string>
+    <string name="title_activity_main">JCBilling</string>
+    <string name="package_name">com.jcbilling.smartapp</string>
+    <string name="custom_url_scheme">com.jcbilling.smartapp</string>
+</resources>

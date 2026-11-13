@@ -1,0 +1,457 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+/* Global Styles and Theme Engine for SmartBilling AI */
+
+:root {
+  color-scheme: light;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+html.dark, :root.dark, body.dark {
+  color-scheme: dark;
+}
+
+/* Base Body Styles - 100% Offline-Resilient System Font Stack */
+body {
+  font-family: var(--font-sans);
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* ==========================================================================
+   DARK THEME SYSTEM (.dark / html.dark)
+   Optimized comprehensive dark styling across all surfaces, cards, tables,
+   forms, modals, badges, navigation, and controls
+   ========================================================================== */
+
+html.dark body,
+body.dark {
+  background-color: #090d16 !important;
+  color: #f1f5f9 !important;
+}
+
+/* Surfaces & Cards in Dark Mode */
+.dark .bg-white,
+html.dark .bg-white {
+  background-color: #131b2e !important;
+}
+
+.dark .bg-white\/90,
+html.dark .bg-white\/90 {
+  background-color: rgba(19, 27, 46, 0.92) !important;
+}
+
+.dark .bg-slate-50,
+.dark .bg-gray-50,
+html.dark .bg-slate-50,
+html.dark .bg-gray-50 {
+  background-color: #0d1424 !important;
+}
+
+.dark .bg-slate-50\/80,
+.dark .bg-gray-50\/50,
+html.dark .bg-slate-50\/80,
+html.dark .bg-gray-50\/50 {
+  background-color: rgba(13, 20, 36, 0.85) !important;
+}
+
+.dark .bg-slate-100,
+.dark .bg-gray-100,
+.dark .bg-gray-100\/50,
+html.dark .bg-slate-100,
+html.dark .bg-gray-100,
+html.dark .bg-gray-100\/50 {
+  background-color: #1c263c !important;
+}
+
+/* Borders in Dark Mode */
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-200\/80,
+.dark .border-slate-200\/90,
+html.dark .border-gray-100,
+html.dark .border-gray-200,
+html.dark .border-slate-100,
+html.dark .border-slate-200,
+html.dark .border-slate-200\/80,
+html.dark .border-slate-200\/90 {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .divide-gray-50 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+html.dark .divide-gray-50 > :not([hidden]) ~ :not([hidden]),
+html.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]),
+html.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* Typography in Dark Mode */
+.dark .text-gray-900,
+.dark .text-slate-900,
+.dark .text-indigo-950,
+html.dark .text-gray-900,
+html.dark .text-slate-900,
+html.dark .text-indigo-950 {
+  color: #f8fafc !important;
+}
+
+.dark .text-gray-800,
+.dark .text-slate-800,
+.dark .text-indigo-900,
+html.dark .text-gray-800,
+html.dark .text-slate-800,
+html.dark .text-indigo-900 {
+  color: #e2e8f0 !important;
+}
+
+.dark .text-gray-700,
+.dark .text-slate-700,
+html.dark .text-gray-700,
+html.dark .text-slate-700 {
+  color: #cbd5e1 !important;
+}
+
+.dark .text-gray-600,
+.dark .text-slate-600,
+html.dark .text-gray-600,
+html.dark .text-slate-600 {
+  color: #94a3b8 !important;
+}
+
+.dark .text-gray-500,
+.dark .text-slate-500,
+html.dark .text-gray-500,
+html.dark .text-slate-500 {
+  color: #64748b !important;
+}
+
+.dark .text-gray-400,
+.dark .text-slate-400,
+html.dark .text-gray-400,
+html.dark .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+/* Form Controls & Inputs in Dark Mode */
+.dark input[type="text"],
+.dark input[type="number"],
+.dark input[type="date"],
+.dark select,
+.dark textarea,
+html.dark input[type="text"],
+html.dark input[type="number"],
+html.dark input[type="date"],
+html.dark select,
+html.dark textarea {
+  background-color: #0b111e !important;
+  color: #f8fafc !important;
+  border-color: #27344d !important;
+}
+
+.dark input::placeholder,
+html.dark input::placeholder {
+  color: #475569 !important;
+}
+
+.dark input:focus,
+.dark select:focus,
+html.dark input:focus,
+html.dark select:focus {
+  border-color: #6366f1 !important;
+  background-color: #0f172a !important;
+}
+
+/* Transparent Row Inputs in Billing Editor */
+.dark table input.bg-transparent,
+html.dark table input.bg-transparent {
+  background-color: transparent !important;
+  color: #f8fafc !important;
+}
+
+.dark table input.bg-transparent:focus,
+html.dark table input.bg-transparent:focus {
+  background-color: rgba(99, 102, 241, 0.1) !important;
+}
+
+/* Table Hover and Highlights in Dark Mode */
+.dark tr.hover\:bg-indigo-50\/40:hover,
+.dark tr.hover\:bg-indigo-50\/30:hover,
+.dark tr.hover\:bg-indigo-50\/10:hover,
+.dark tr:hover,
+html.dark tr.hover\:bg-indigo-50\/40:hover,
+html.dark tr.hover\:bg-indigo-50\/30:hover,
+html.dark tr.hover\:bg-indigo-50\/10:hover,
+html.dark tr:hover {
+  background-color: rgba(99, 102, 241, 0.08) !important;
+}
+
+.dark th,
+html.dark th {
+  background-color: #0d1424 !important;
+  color: #94a3b8 !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark td,
+html.dark td {
+  border-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Pill Badges in Dark Mode */
+.dark .bg-emerald-50,
+html.dark .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.16) !important;
+  color: #34d399 !important;
+}
+
+.dark .bg-indigo-50,
+html.dark .bg-indigo-50 {
+  background-color: rgba(99, 102, 241, 0.16) !important;
+  color: #a5b4fc !important;
+}
+
+.dark .bg-amber-50,
+html.dark .bg-amber-50 {
+  background-color: rgba(245, 158, 11, 0.16) !important;
+  color: #fbbf24 !important;
+}
+
+.dark .bg-red-50,
+html.dark .bg-red-50 {
+  background-color: rgba(239, 68, 68, 0.16) !important;
+  color: #f87171 !important;
+}
+
+/* Hover States for Buttons in Dark Mode */
+.dark .hover\:bg-indigo-50:hover,
+.dark .hover\:bg-indigo-50\/40:hover,
+html.dark .hover\:bg-indigo-50:hover,
+html.dark .hover\:bg-indigo-50\/40:hover {
+  background-color: rgba(99, 102, 241, 0.2) !important;
+  color: #c7d2fe !important;
+}
+
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover,
+html.dark .hover\:bg-gray-50:hover,
+html.dark .hover\:bg-gray-100:hover {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* Modals in Dark Mode */
+.dark .bg-indigo-950\/80,
+html.dark .bg-indigo-950\/80 {
+  background-color: rgba(3, 7, 18, 0.88) !important;
+}
+
+/* Scrollbars for Dark Mode */
+.dark ::-webkit-scrollbar,
+html.dark ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.dark ::-webkit-scrollbar-track,
+html.dark ::-webkit-scrollbar-track {
+  background: #090d16;
+}
+
+.dark ::-webkit-scrollbar-thumb,
+html.dark ::-webkit-scrollbar-thumb {
+  background: #27344d;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover,
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #384b6d;
+}
+
+/* ==========================================================================
+   READING THEME SYSTEM (.reading / html.reading)
+   Warm paper sepia aesthetic for comfortable prolonged work
+   ========================================================================== */
+
+html.reading body,
+body.reading {
+  background-color: #faf5eb !important;
+  color: #3b2e21 !important;
+}
+
+.reading .bg-white,
+html.reading .bg-white {
+  background-color: #f5eedf !important;
+}
+
+.reading .bg-white\/90,
+html.reading .bg-white\/90 {
+  background-color: rgba(245, 238, 223, 0.92) !important;
+}
+
+.reading .bg-slate-50,
+.reading .bg-gray-50,
+html.reading .bg-slate-50,
+html.reading .bg-gray-50 {
+  background-color: #ede4d1 !important;
+}
+
+.reading .border-gray-100,
+.reading .border-gray-200,
+.reading .border-slate-100,
+.reading .border-slate-200,
+html.reading .border-gray-100,
+html.reading .border-gray-200,
+html.reading .border-slate-100,
+html.reading .border-slate-200 {
+  border-color: #dfd3bd !important;
+}
+
+.reading .text-gray-900,
+.reading .text-slate-900,
+.reading .text-indigo-950,
+html.reading .text-gray-900,
+html.reading .text-slate-900,
+html.reading .text-indigo-950 {
+  color: #2b2118 !important;
+}
+
+.reading .text-gray-600,
+.reading .text-slate-600,
+html.reading .text-gray-600,
+html.reading .text-slate-600 {
+  color: #635445 !important;
+}
+
+/* Reading Mode Table Row Actions & Delete Buttons */
+.reading .reading-delete-btn,
+html.reading .reading-delete-btn {
+  background-color: rgba(239, 68, 68, 0.12) !important;
+  color: #b91c1c !important;
+  border-color: rgba(239, 68, 68, 0.28) !important;
+}
+
+.reading .reading-delete-btn:hover,
+html.reading .reading-delete-btn:hover {
+  background-color: rgba(239, 68, 68, 0.22) !important;
+  color: #991b1b !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+}
+
+.reading .reading-locked-btn,
+html.reading .reading-locked-btn {
+  background-color: rgba(120, 108, 94, 0.12) !important;
+  color: #786c5e !important;
+  border-color: rgba(120, 108, 94, 0.25) !important;
+}
+
+.reading .reading-locked-btn:hover,
+html.reading .reading-locked-btn:hover {
+  background-color: rgba(120, 108, 94, 0.2) !important;
+  color: #4a3f35 !important;
+  border-color: rgba(120, 108, 94, 0.4) !important;
+}
+
+/* Missing Row Blinking Red Highlight */
+@keyframes redBlinkBorder {
+  0%, 100% {
+    border-color: #ef4444;
+    background-color: rgba(254, 226, 226, 0.7);
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.35);
+  }
+  50% {
+    border-color: rgba(239, 68, 68, 0.3);
+    background-color: rgba(254, 226, 226, 0.15);
+    box-shadow: 0 0 0 0px transparent;
+  }
+}
+
+@keyframes redBlinkBorderDark {
+  0%, 100% {
+    border-color: #f87171;
+    background-color: rgba(127, 29, 29, 0.5);
+    box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.35);
+  }
+  50% {
+    border-color: rgba(248, 113, 113, 0.25);
+    background-color: rgba(127, 29, 29, 0.12);
+    box-shadow: 0 0 0 0px transparent;
+  }
+}
+
+.missing-row-blinking {
+  animation: redBlinkBorder 1.4s ease-in-out infinite !important;
+}
+
+.dark .missing-row-blinking,
+html.dark .missing-row-blinking {
+  animation: redBlinkBorderDark 1.4s ease-in-out infinite !important;
+}
+
+.reading .missing-row-blinking,
+html.reading .missing-row-blinking {
+  animation: redBlinkBorder 1.4s ease-in-out infinite !important;
+}
+
+/* Repeated / Duplicate Red Border */
+.duplicate-col-red {
+  border-color: #ef4444 !important;
+  border-width: 2px !important;
+  background-color: rgba(254, 242, 242, 0.7) !important;
+  color: #b91c1c !important;
+}
+
+.dark .duplicate-col-red,
+html.dark .duplicate-col-red {
+  border-color: #f87171 !important;
+  border-width: 2px !important;
+  background-color: rgba(127, 29, 29, 0.35) !important;
+  color: #fca5a5 !important;
+}
+
+.reading .duplicate-col-red,
+html.reading .duplicate-col-red {
+  border-color: #dc2626 !important;
+  border-width: 2px !important;
+  background-color: rgba(254, 226, 226, 0.6) !important;
+  color: #991b1b !important;
+}
+
+/* Button Progression Filler Animated Stripes */
+@keyframes progressStripes {
+  0% { background-position: 0 0; }
+  100% { background-position: 32px 0; }
+}
+
+.animate-progress-stripes {
+  background-size: 32px 32px;
+  background-image: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.22) 75%,
+    transparent 75%,
+    transparent
+  );
+  animation: progressStripes 0.85s linear infinite;
+}
+
+/* Native Android APK Safe-Area & WebView Polish */
+html, body {
+  overscroll-behavior-y: contain;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
