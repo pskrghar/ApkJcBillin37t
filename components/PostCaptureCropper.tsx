@@ -110,7 +110,7 @@ function applyHomography(m: number[], x: number, y: number): { x: number; y: num
  */
 function drawTriangle(
   ctx: CanvasRenderingContext2D,
-  img: HTMLCanvasElement,
+  img: HTMLCanvasElement | HTMLImageElement,
   x0: number,
   y0: number,
   x1: number,
@@ -338,13 +338,6 @@ function warpPerspective(
   const outCtx = outCanvas.getContext('2d', { alpha: false });
   if (!outCtx) return outCanvas;
 
-  const srcCanvas = document.createElement('canvas');
-  srcCanvas.width = srcW;
-  srcCanvas.height = srcH;
-  const srcCtx = srcCanvas.getContext('2d', { alpha: false });
-  if (!srcCtx) return outCanvas;
-  srcCtx.drawImage(sourceImg, 0, 0);
-
   // Homography matrix mapping destination pixels -> source image coordinates
   const matrix = getPerspectiveTransform(
     [
@@ -358,12 +351,10 @@ function warpPerspective(
 
   if (!matrix) {
     outCtx.drawImage(sourceImg, 0, 0, outW, outH);
-    srcCanvas.width = 1;
-    srcCanvas.height = 1;
     return outCanvas;
   }
 
-  // 12x12 grid yields 288 triangles (instead of 2,048) — 86% less RAM & CPU overhead
+  // 12x12 grid yields 288 triangles directly from sourceImg (zero intermediate full-res canvas copy)
   const gridX = 12;
   const gridY = 12;
   const dx = outW / gridX;
@@ -381,14 +372,10 @@ function warpPerspective(
       const pt2 = applyHomography(matrix, x1, y1);
       const pt3 = applyHomography(matrix, x0, y1);
 
-      drawTriangle(outCtx, srcCanvas, x0, y0, x1, y0, x0, y1, pt0.x, pt0.y, pt1.x, pt1.y, pt3.x, pt3.y);
-      drawTriangle(outCtx, srcCanvas, x1, y0, x1, y1, x0, y1, pt1.x, pt1.y, pt2.x, pt2.y, pt3.x, pt3.y);
+      drawTriangle(outCtx, sourceImg, x0, y0, x1, y0, x0, y1, pt0.x, pt0.y, pt1.x, pt1.y, pt3.x, pt3.y);
+      drawTriangle(outCtx, sourceImg, x1, y0, x1, y1, x0, y1, pt1.x, pt1.y, pt2.x, pt2.y, pt3.x, pt3.y);
     }
   }
-
-  // Release source canvas memory immediately
-  srcCanvas.width = 1;
-  srcCanvas.height = 1;
 
   if (enhanceContrast) {
     const imgData = outCtx.getImageData(0, 0, outW, outH);
@@ -448,37 +435,59 @@ export const PostCaptureCropper: React.FC<PostCaptureCropperProps> = ({
     height: 0,
   });
 
+  const [isImageLoading, setIsImageLoading] = useState<boolean>(Boolean(isOpen && imageSrc));
+  const [imageLoadError, setImageLoadError] = useState<boolean>(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const loupeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const skipAutoDetectOnNextLoadRef = useRef<boolean>(false);
 
-  // Initialize or reset when imageSrc changes or modal opens
+  // Initialize or reset when imageSrc changes or modal opens (single-decode via rendered <img>)
   useEffect(() => {
     if (!isOpen || !imageSrc) {
       setCurrentImageSrc(null);
       setLoadedImage(null);
+      setIsImageLoading(false);
+      setImageLoadError(false);
       setRotationAngle(0);
       setIsProcessingWarp(false);
       setPreviewResultUrl(null);
+      skipAutoDetectOnNextLoadRef.current = false;
       return;
     }
 
+    skipAutoDetectOnNextLoadRef.current = false;
+    setLoadedImage(null);
+    setIsImageLoading(true);
+    setImageLoadError(false);
     setCurrentImageSrc(imageSrc);
     setRotationAngle(0);
     setIsProcessingWarp(false);
     setPreviewResultUrl(null);
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      setLoadedImage(img);
-
-      // Perform fast auto-edge detection directly from image without intermediate canvas allocation
-      const { corners: detectedCorners } = detectDocumentCorners(img);
-      setCorners(detectedCorners);
-    };
-    img.src = imageSrc;
   }, [isOpen, imageSrc]);
+
+  const handleImageElementLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    const imgEl = e.currentTarget;
+    setLoadedImage(imgEl);
+    setIsImageLoading(false);
+    setImageLoadError(false);
+
+    if (skipAutoDetectOnNextLoadRef.current) {
+      skipAutoDetectOnNextLoadRef.current = false;
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      const { corners: detectedCorners } = detectDocumentCorners(imgEl);
+      setCorners(detectedCorners);
+    });
+  }, []);
+
+  const handleImageElementError = useCallback(() => {
+    setIsImageLoading(false);
+    setImageLoadError(true);
+  }, []);
 
   // Monitor container size for pixel mapping
   useEffect(() => {
@@ -594,22 +603,17 @@ export const PostCaptureCropper: React.FC<PostCaptureCropperProps> = ({
     const rotatedDataUrl = canvas.toDataURL('image/jpeg', 0.90);
     canvas.width = 1;
     canvas.height = 1;
-    setCurrentImageSrc(rotatedDataUrl);
+
+    // Rotate corners 90 deg clockwise: (x, y) -> (1 - y, x) and let single <img> reload handle decode
+    skipAutoDetectOnNextLoadRef.current = true;
+    setCorners((prev) => ({
+      tl: { x: Number((1 - prev.bl.y).toFixed(4)), y: Number(prev.bl.x.toFixed(4)) },
+      tr: { x: Number((1 - prev.tl.y).toFixed(4)), y: Number(prev.tl.x.toFixed(4)) },
+      br: { x: Number((1 - prev.tr.y).toFixed(4)), y: Number(prev.tr.x.toFixed(4)) },
+      bl: { x: Number((1 - prev.br.y).toFixed(4)), y: Number(prev.br.x.toFixed(4)) },
+    }));
     setRotationAngle((prev) => (prev + 90) % 360);
-
-    const newImg = new Image();
-    newImg.onload = () => {
-      setLoadedImage(newImg);
-
-      // Rotate corners 90 deg clockwise: (x, y) -> (1 - y, x)
-      setCorners((prev) => ({
-        tl: { x: Number((1 - prev.bl.y).toFixed(4)), y: Number(prev.bl.x.toFixed(4)) },
-        tr: { x: Number((1 - prev.tl.y).toFixed(4)), y: Number(prev.tl.x.toFixed(4)) },
-        br: { x: Number((1 - prev.tr.y).toFixed(4)), y: Number(prev.tr.x.toFixed(4)) },
-        bl: { x: Number((1 - prev.br.y).toFixed(4)), y: Number(prev.br.x.toFixed(4)) },
-      }));
-    };
-    newImg.src = rotatedDataUrl;
+    setCurrentImageSrc(rotatedDataUrl);
   }, [loadedImage]);
 
   // Reset corners to 5% inward default
@@ -776,8 +780,8 @@ export const PostCaptureCropper: React.FC<PostCaptureCropperProps> = ({
 
       setIsProcessingWarp(true);
 
-      // Execute perspective rectification to 1600px width (crisp OCR sharpness with low RAM)
-      setTimeout(() => {
+      // Yield a single animation frame so the spinner renders, then run zero-copy warp immediately
+      requestAnimationFrame(() => {
         try {
           const warpedCanvas = warpPerspective(loadedImage, corners, 1600, enhanceContrast);
           warpedCanvas.toBlob(
@@ -806,7 +810,7 @@ export const PostCaptureCropper: React.FC<PostCaptureCropperProps> = ({
           console.error('[PostCaptureCropper] Warp error:', err);
           setIsProcessingWarp(false);
         }
-      }, 30);
+      });
     },
     [loadedImage, corners, enhanceContrast, isProcessingWarp, pageIndex, onConfirmCrop]
   );
@@ -833,8 +837,14 @@ export const PostCaptureCropper: React.FC<PostCaptureCropperProps> = ({
     y: renderRect.y + corners.bl.y * renderRect.height,
   };
 
+  const hasReadyBounds = !!loadedImage && containerDimensions.width > 0 && containerDimensions.height > 0;
+  const showPhotoLoader = (isImageLoading || !loadedImage) && !imageLoadError;
   const polyPath = `M ${cTL.x},${cTL.y} L ${cTR.x},${cTR.y} L ${cBR.x},${cBR.y} L ${cBL.x},${cBL.y} Z`;
-  const maskPath = `M 0,0 H ${containerDimensions.width} V ${containerDimensions.height} H 0 Z ${polyPath}`;
+  const maskW = containerDimensions.width > 0 ? containerDimensions.width : 4000;
+  const maskH = containerDimensions.height > 0 ? containerDimensions.height : 4000;
+  const maskPath = hasReadyBounds
+    ? `M 0,0 H ${maskW} V ${maskH} H 0 Z ${polyPath}`
+    : `M 0,0 H ${maskW} V ${maskH} H 0 Z`;
 
   const cornerEntries: { key: keyof DocumentCorners; label: string; pt: { x: number; y: number } }[] = [
     { key: 'tl', label: 'TL', pt: cTL },
@@ -846,10 +856,10 @@ export const PostCaptureCropper: React.FC<PostCaptureCropperProps> = ({
   return (
     <div
       id="post-capture-cropper-modal"
-      className="fixed inset-0 z-50 flex flex-col bg-slate-950 text-white select-none animate-in fade-in duration-200"
+      className="fixed inset-0 h-[100dvh] z-50 flex flex-col bg-slate-950 text-white select-none animate-in fade-in duration-200 overflow-hidden"
     >
       {/* Top Header Bar */}
-      <header className="shrink-0 flex items-center justify-between px-4 py-3 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 z-20">
+      <header className="shrink-0 flex items-center justify-between px-3 sm:px-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-2.5 sm:py-3 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 z-20">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md">
             <SparklesIcon className="h-5 w-5" />
@@ -919,9 +929,22 @@ export const PostCaptureCropper: React.FC<PostCaptureCropperProps> = ({
       >
         {currentImageSrc && (
           <img
+            ref={imgRef}
             src={currentImageSrc}
             alt="Captured Manifest"
-            className="w-full h-full object-contain pointer-events-none"
+            decoding="async"
+            crossOrigin={
+              currentImageSrc.startsWith('http') &&
+              typeof window !== 'undefined' &&
+              !currentImageSrc.startsWith(window.location.origin)
+                ? 'anonymous'
+                : undefined
+            }
+            onLoad={handleImageElementLoad}
+            onError={handleImageElementError}
+            className={`w-full h-full object-contain pointer-events-none transition-opacity duration-200 ${
+              loadedImage ? 'opacity-100' : 'opacity-0'
+            }`}
             style={{ filter: isProcessingWarp ? 'brightness(0.6)' : 'none' }}
           />
         )}
@@ -932,18 +955,24 @@ export const PostCaptureCropper: React.FC<PostCaptureCropperProps> = ({
           className="absolute inset-0 w-full h-full pointer-events-auto"
           style={{ touchAction: 'none' }}
         >
-          {/* Dimmed backdrop outside document boundary */}
-          <path d={maskPath} fill="rgba(0, 0, 0, 0.55)" fillRule="evenodd" />
-
-          {/* Glowing polygon document outline */}
-          <polygon
-            points={`${cTL.x},${cTL.y} ${cTR.x},${cTR.y} ${cBR.x},${cBR.y} ${cBL.x},${cBL.y}`}
-            fill="rgba(99, 102, 241, 0.15)"
-            stroke="#6366f1"
-            strokeWidth="2.5"
-            strokeDasharray="6 4"
-            className="transition-all"
+          {/* Dimmed backdrop outside document boundary (stays full-area while image loads) */}
+          <path
+            d={maskPath}
+            fill={hasReadyBounds ? 'rgba(0, 0, 0, 0.55)' : 'rgba(2, 6, 23, 0.78)'}
+            fillRule="evenodd"
+            className="transition-all duration-200"
           />
+
+          {hasReadyBounds && (
+            <>
+              {/* Glowing polygon document outline */}
+              <polygon
+                points={`${cTL.x},${cTL.y} ${cTR.x},${cTR.y} ${cBR.x},${cBR.y} ${cBL.x},${cBL.y}`}
+                fill="rgba(99, 102, 241, 0.15)"
+                stroke="#6366f1"
+                strokeWidth="2.5"
+                strokeDasharray="6 4"
+              />
 
           {/* Diagonal guidelines for optical alignment */}
           <line
@@ -1216,7 +1245,127 @@ export const PostCaptureCropper: React.FC<PostCaptureCropperProps> = ({
               </g>
             );
           })}
+            </>
+          )}
         </svg>
+
+        {/* User-Friendly Sand Hourglass Loader over SVG Path Backdrop */}
+        {showPhotoLoader && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-20 pointer-events-none px-4 animate-in fade-in duration-150"
+          >
+            <div className="px-6 py-5 rounded-3xl bg-slate-900/90 border border-amber-400/30 shadow-2xl shadow-black/70 flex flex-col items-center gap-3 backdrop-blur-md max-w-[260px] text-center">
+              <div className="relative h-16 w-16 flex items-center justify-center rounded-2xl bg-slate-950/80 border border-amber-400/20 shadow-inner">
+                <svg
+                  viewBox="0 0 64 80"
+                  className="h-14 w-12 overflow-visible drop-shadow-[0_2px_10px_rgba(251,191,36,0.28)]"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <linearGradient id="cropperSandGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#fde68a" />
+                      <stop offset="55%" stopColor="#fbbf24" />
+                      <stop offset="100%" stopColor="#d97706" />
+                    </linearGradient>
+                    <clipPath id="cropperHourglassTopClip">
+                      <path d="M 20,12 H 44 V 20 C 44,30 33,36 32,39 C 31,36 20,30 20,20 Z" />
+                    </clipPath>
+                    <clipPath id="cropperHourglassBottomClip">
+                      <path d="M 32,41 C 33,44 44,50 44,60 V 68 H 20 V 60 C 20,50 31,44 32,41 Z" />
+                    </clipPath>
+                  </defs>
+
+                  <g className="animate-hourglass-flip">
+                    {/* Top & bottom caps */}
+                    <rect x="14" y="6" width="36" height="4.5" rx="2.25" fill="#94a3b8" />
+                    <rect x="14" y="69.5" width="36" height="4.5" rx="2.25" fill="#94a3b8" />
+
+                    {/* Soft inner glass tint */}
+                    <path
+                      d="M 18,10.5 H 46 V 20 C 46,32 34,37 33,40 C 34,43 46,48 46,60 V 69.5 H 18 V 60 C 18,48 30,43 31,40 C 30,37 18,32 18,20 Z"
+                      fill="rgba(148, 163, 184, 0.08)"
+                    />
+
+                    {/* Upper sand draining smoothly */}
+                    <g clipPath="url(#cropperHourglassTopClip)">
+                      <rect
+                        x="18"
+                        y="12"
+                        width="28"
+                        height="27"
+                        fill="url(#cropperSandGradient)"
+                        className="animate-hourglass-sand-top"
+                      />
+                    </g>
+
+                    {/* Trickling falling sand stream */}
+                    <line
+                      x1="32"
+                      y1="39"
+                      x2="32"
+                      y2="67.5"
+                      stroke="#fbbf24"
+                      strokeWidth="2.2"
+                      strokeDasharray="3 3"
+                      strokeLinecap="round"
+                      className="animate-hourglass-stream"
+                    />
+
+                    {/* Lower sand filling smoothly */}
+                    <g clipPath="url(#cropperHourglassBottomClip)">
+                      <rect
+                        x="18"
+                        y="41"
+                        width="28"
+                        height="27"
+                        fill="url(#cropperSandGradient)"
+                        className="animate-hourglass-sand-bottom"
+                      />
+                    </g>
+
+                    {/* Outer glass frame */}
+                    <path
+                      d="M 18,10.5 H 46 V 20 C 46,32 34,37 33,40 C 34,43 46,48 46,60 V 69.5 H 18 V 60 C 18,48 30,43 31,40 C 30,37 18,32 18,20 Z"
+                      fill="none"
+                      stroke="#cbd5e1"
+                      strokeWidth="2"
+                      strokeLinejoin="round"
+                    />
+                  </g>
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-black text-white tracking-wide">
+                  Loading Your Photo...
+                </p>
+                <p className="text-[11px] text-slate-300 mt-0.5 leading-snug">
+                  Please wait a moment while the full-resolution photo opens
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Friendly Retry State if Photo Could Not Be Decoded */}
+        {imageLoadError && !loadedImage && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center z-20 px-4">
+            <div className="px-5 py-4 rounded-2xl bg-slate-900/95 border border-rose-500/40 shadow-2xl flex flex-col items-center gap-3 text-center max-w-xs">
+              <p className="text-sm font-bold text-white">Could not load captured photo</p>
+              <p className="text-xs text-slate-400">
+                Please tap Retake to capture the page again.
+              </p>
+              <button
+                type="button"
+                onClick={onRetake}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black cursor-pointer"
+              >
+                Retake Photo
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Active Corner Magnifier Loupe Floating Box */}
         {activeCorner && activePointerPos && (
@@ -1299,8 +1448,8 @@ export const PostCaptureCropper: React.FC<PostCaptureCropperProps> = ({
       </main>
 
       {/* Bottom Action Control Bar */}
-      <footer className="shrink-0 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 p-3 sm:p-4 z-20">
-        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+      <footer className="shrink-0 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-3 pt-2.5 sm:px-4 sm:pt-4 pb-[max(1rem,calc(env(safe-area-inset-bottom,0px)+0.75rem))] z-20">
+        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 sm:gap-3">
           {/* Helper Tools: Retake, Rotate, Auto-Detect, Full, Reset */}
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-center">
             <button

@@ -1,14 +1,16 @@
-import React, { useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { CameraIcon, SparklesIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, PluginListenerHandle } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 
 export interface NativeCameraPhoto {
-  file: File;
+  file: File | null;
   preview: string;
   width: number;
   height: number;
   sizeBytes: number;
+  isDirectUri?: boolean;
 }
 
 export interface NativeCameraShutterProps {
@@ -28,10 +30,10 @@ export interface NativeCameraShutterProps {
 
 export interface NativeCameraShutterRef {
   trigger: () => void;
+  reset: () => void;
   isNative: boolean;
 }
 
-/**
 /**
  * High-precision image resizer & RAM-optimized decoder.
  * Uses createImageBitmap hardware-accelerated downscaling when available to avoid
@@ -224,7 +226,7 @@ export async function optimizePhotoForOcr(
 /**
  * Unified Native Camera Trigger Component
  * Invokes native mobile camera intent (Capacitor or HTML5 capture="environment")
- * with memory constraints, optical focus, and high-res capture.
+ * with memory constraints, optical focus, high-res capture, and abort/cancel recovery.
  */
 export const NativeCameraShutter = forwardRef<NativeCameraShutterRef, NativeCameraShutterProps>(
   (
@@ -247,32 +249,181 @@ export const NativeCameraShutter = forwardRef<NativeCameraShutterRef, NativeCame
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
 
+    // Synchronous lock & attempt tracking so aborted/cancelled sessions never permanently lock re-clicks
+    const isProcessingRef = useRef(false);
+    const captureAttemptIdRef = useRef(0);
+    const cameraLaunchedAtRef = useRef(0);
+    const appLeftForegroundRef = useRef(false);
+    const resumeUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     const isNativeCapacitor = typeof window !== 'undefined' && Capacitor.isNativePlatform();
 
-    const triggerNativeCamera = useCallback(async () => {
-      if (disabled || isProcessing) return;
+    const clearResumeUnlockTimer = useCallback(() => {
+      if (resumeUnlockTimerRef.current) {
+        clearTimeout(resumeUnlockTimerRef.current);
+        resumeUnlockTimerRef.current = null;
+      }
+    }, []);
 
+    const releaseProcessingLock = useCallback(
+      (attemptId?: number) => {
+        if (typeof attemptId === 'number' && attemptId !== captureAttemptIdRef.current) {
+          return;
+        }
+        clearResumeUnlockTimer();
+        isProcessingRef.current = false;
+        appLeftForegroundRef.current = false;
+        setIsProcessing(false);
+        onCapturingChange?.(false);
+      },
+      [clearResumeUnlockTimer, onCapturingChange]
+    );
+
+    // Recover automatically if the user aborts/cancels the camera intent or file picker and returns to the app
+    useEffect(() => {
+      if (typeof window === 'undefined') return;
+
+      const scheduleForegroundRecovery = () => {
+        if (!isProcessingRef.current) return;
+        const activeAttemptId = captureAttemptIdRef.current;
+
+        clearResumeUnlockTimer();
+        // Allow brief grace period (~450ms on native, ~350ms on web) for real capture result/onChange to arrive first
+        const delayMs = isNativeCapacitor ? 450 : 350;
+        resumeUnlockTimerRef.current = setTimeout(() => {
+          if (!isProcessingRef.current || captureAttemptIdRef.current !== activeAttemptId) {
+            return;
+          }
+          if (!isNativeCapacitor) {
+            const hasSelectedFile = !!fileInputRef.current?.files?.length;
+            if (!hasSelectedFile) {
+              releaseProcessingLock(activeAttemptId);
+            }
+          } else if (appLeftForegroundRef.current || document.visibilityState === 'visible') {
+            releaseProcessingLock(activeAttemptId);
+          }
+        }, delayMs);
+      };
+
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+          if (isProcessingRef.current) {
+            appLeftForegroundRef.current = true;
+          }
+        } else if (document.visibilityState === 'visible') {
+          scheduleForegroundRecovery();
+        }
+      };
+
+      const handleWindowFocus = () => {
+        scheduleForegroundRecovery();
+      };
+
+      const handleFileInputCancel = () => {
+        releaseProcessingLock();
+      };
+
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('focus', handleWindowFocus);
+      const inputEl = fileInputRef.current;
+      inputEl?.addEventListener('cancel', handleFileInputCancel);
+
+      let stateHandle: PluginListenerHandle | null = null;
+      let resumeHandle: PluginListenerHandle | null = null;
+      let pauseHandle: PluginListenerHandle | null = null;
+      let isMounted = true;
+
+      if (isNativeCapacitor) {
+        CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+          if (!isMounted) return;
+          if (!isActive && isProcessingRef.current) {
+            appLeftForegroundRef.current = true;
+          } else if (isActive && isProcessingRef.current) {
+            scheduleForegroundRecovery();
+          }
+        })
+          .then((h) => {
+            if (isMounted) stateHandle = h;
+            else h.remove().catch(() => {});
+          })
+          .catch(() => {});
+
+        CapacitorApp.addListener('pause', () => {
+          if (isMounted && isProcessingRef.current) {
+            appLeftForegroundRef.current = true;
+          }
+        })
+          .then((h) => {
+            if (isMounted) pauseHandle = h;
+            else h.remove().catch(() => {});
+          })
+          .catch(() => {});
+
+        CapacitorApp.addListener('resume', () => {
+          if (isMounted && isProcessingRef.current) {
+            scheduleForegroundRecovery();
+          }
+        })
+          .then((h) => {
+            if (isMounted) resumeHandle = h;
+            else h.remove().catch(() => {});
+          })
+          .catch(() => {});
+      }
+
+      return () => {
+        isMounted = false;
+        clearResumeUnlockTimer();
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('focus', handleWindowFocus);
+        inputEl?.removeEventListener('cancel', handleFileInputCancel);
+        stateHandle?.remove().catch(() => {});
+        pauseHandle?.remove().catch(() => {});
+        resumeHandle?.remove().catch(() => {});
+      };
+    }, [isNativeCapacitor, clearResumeUnlockTimer, releaseProcessingLock]);
+
+    const triggerNativeCamera = useCallback(async () => {
+      if (disabled) return;
+
+      if (isProcessingRef.current) {
+        const elapsedSinceLaunch = Date.now() - cameraLaunchedAtRef.current;
+        const isStaleOrReturned =
+          !isNativeCapacitor ||
+          appLeftForegroundRef.current ||
+          (typeof document !== 'undefined' && document.visibilityState === 'visible' && elapsedSinceLaunch > 450);
+
+        if (!isStaleOrReturned) {
+          return;
+        }
+        // Recover cleanly from an aborted/hung prior attempt and allow immediate relaunch
+        releaseProcessingLock();
+      }
+
+      const attemptId = ++captureAttemptIdRef.current;
+      clearResumeUnlockTimer();
+      isProcessingRef.current = true;
+      cameraLaunchedAtRef.current = Date.now();
+      appLeftForegroundRef.current = false;
       setIsProcessing(true);
       onCapturingChange?.(true);
 
       try {
-        // Pre-capture persistence hook to survive OS process kills
+        // Pre-capture survival flag (non-blocking on native so camera intent opens immediately)
         if (onBeforeCapture) {
-          try {
-            await onBeforeCapture();
-          } catch (persistErr) {
+          Promise.resolve(onBeforeCapture()).catch((persistErr) => {
             console.warn('[NativeCameraShutter] onBeforeCapture warning:', persistErr);
-          }
+          });
         }
 
         if (isNativeCapacitor) {
           // Native Android / iOS APK via Capacitor Camera Plugin
-          // Constraining width, height, and quality prevents Android lmkd/ActivityManager
-          // from killing the WebView process when launching the native camera hardware intent!
+          // Preserves full 1920px HDR clarity; passes local webPath directly to cropper
+          // without redundant JS fetch + canvas decode/re-encode delay.
           const photo = await Camera.getPhoto({
             resultType: CameraResultType.Uri,
             source: CameraSource.Camera,
-            quality: 85,
+            quality: 88,
             width: 1920,
             height: 1920,
             allowEditing: false,
@@ -280,70 +431,90 @@ export const NativeCameraShutter = forwardRef<NativeCameraShutterRef, NativeCame
             saveToGallery: false,
           });
 
-          if (!photo.webPath && !photo.path) {
+          // Clear pending recovery timer since Capacitor returned a photo result
+          clearResumeUnlockTimer();
+
+          const directUri = photo.webPath || photo.path;
+          if (!directUri) {
             throw new Error('No image URI returned from native camera intent');
           }
 
-          // Fetch the local webPath into a Blob
-          const response = await fetch(photo.webPath || photo.path!);
-          const blob = await response.blob();
+          // Release lock BEFORE forwarding photo so subsequent camera launches are always ready
+          releaseProcessingLock(attemptId);
 
-          const optimized = await optimizePhotoForOcr(blob, 'manifest_hdr');
-          onPhotoCaptured(optimized);
+          onPhotoCaptured({
+            file: null,
+            preview: directUri,
+            width: 0,
+            height: 0,
+            sizeBytes: 0,
+            isDirectUri: true,
+          });
         } else {
           // Standard Mobile Browser or Desktop fallback: HTML5 file input with capture="environment"
           if (fileInputRef.current) {
             fileInputRef.current.value = '';
             fileInputRef.current.click();
+          } else {
+            releaseProcessingLock(attemptId);
           }
         }
       } catch (err: any) {
-        // User cancellation is not a fatal error
+        // Always release lock for this attempt, regardless of cancellation phrasing
+        releaseProcessingLock(attemptId);
+
+        const errMsg = String(err?.message || err || '').toLowerCase();
         const isCancelled =
-          err?.message?.includes('cancelled') ||
-          err?.message?.includes('User cancelled') ||
-          err?.message?.includes('cancel');
+          errMsg.includes('cancel') ||
+          errMsg.includes('abort') ||
+          errMsg.includes('no image picked') ||
+          errMsg.includes('dismiss');
 
         if (!isCancelled) {
           console.error('[NativeCameraShutter] Capture error:', err);
           onError?.(err instanceof Error ? err : new Error(String(err)));
         }
-        setIsProcessing(false);
-        onCapturingChange?.(false);
-      } finally {
-        if (isNativeCapacitor) {
-          setIsProcessing(false);
-          onCapturingChange?.(false);
-        }
       }
-    }, [disabled, isProcessing, isNativeCapacitor, onBeforeCapture, onPhotoCaptured, onError, onCapturingChange]);
+    }, [
+      disabled,
+      isNativeCapacitor,
+      clearResumeUnlockTimer,
+      releaseProcessingLock,
+      onBeforeCapture,
+      onPhotoCaptured,
+      onError,
+      onCapturingChange,
+    ]);
 
     useImperativeHandle(
       ref,
       () => ({
         trigger: triggerNativeCamera,
+        reset: () => releaseProcessingLock(),
         isNative: isNativeCapacitor,
       }),
-      [triggerNativeCamera, isNativeCapacitor]
+      [triggerNativeCamera, releaseProcessingLock, isNativeCapacitor]
     );
 
     const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const attemptId = captureAttemptIdRef.current;
+      clearResumeUnlockTimer();
+
       const file = e.target.files?.[0];
       if (!file) {
-        setIsProcessing(false);
-        onCapturingChange?.(false);
+        releaseProcessingLock(attemptId);
         return;
       }
 
       try {
         const optimized = await optimizePhotoForOcr(file, 'manifest_hdr');
+        releaseProcessingLock(attemptId);
         onPhotoCaptured(optimized);
       } catch (err) {
         console.error('[NativeCameraShutter] File optimization error:', err);
+        releaseProcessingLock(attemptId);
         onError?.(err instanceof Error ? err : new Error(String(err)));
       } finally {
-        setIsProcessing(false);
-        onCapturingChange?.(false);
         if (fileInputRef.current) {
           fileInputRef.current.value = '';
         }
@@ -393,16 +564,16 @@ export const NativeCameraShutter = forwardRef<NativeCameraShutterRef, NativeCame
             id={id}
             type="button"
             onClick={triggerNativeCamera}
-            disabled={disabled || isProcessing}
+            disabled={disabled}
             className={`${buttonClasses} ${
-              disabled || isProcessing ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''
+              disabled ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''
             } ${className}`}
             title="Opens mobile device's actual native camera app with full HDR and macro focus"
           >
           {isProcessing ? (
             <>
               <ArrowPathIcon className="h-5 w-5 animate-spin text-white/90" />
-              <span>Processing HDR Photo...</span>
+              <span>Opening Native Camera...</span>
             </>
           ) : variant === 'shutter-ring' ? (
             <div className="h-full w-full rounded-full flex items-center justify-center bg-indigo-600 text-white hover:bg-indigo-500 transition-colors">

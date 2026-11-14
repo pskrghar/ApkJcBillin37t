@@ -84,7 +84,11 @@ import {
   saveExtractionModelPreference,
   AVAILABLE_EXTRACTION_MODELS,
   ExtractionModelPreference,
-  ExtractionEngineMode
+  ExtractionEngineMode,
+  ExtractionModelSpec,
+  fetchAvailableGeminiModels,
+  getSavedFetchedModels,
+  saveFetchedModels
 } from './services/manifestExtractor';
 import { DocumentCropScanner, CapturedDocumentPage } from './components/DocumentCropScanner';
 import { HighResInAppCamera, HighResInAppCameraPhoto } from './components/HighResInAppCamera';
@@ -337,6 +341,11 @@ const App: React.FC = () => {
   const [extractionModelPref, setExtractionModelPref] = useState<ExtractionModelPreference>(() => {
     return getExtractionModelPreference();
   });
+  const [fetchedModels, setFetchedModels] = useState<ExtractionModelSpec[]>(() => {
+    return getSavedFetchedModels();
+  });
+  const [isFetchingModels, setIsFetchingModels] = useState<boolean>(false);
+  const [fetchModelsFeedback, setFetchModelsFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const handleUpdateModelPreference = (newPref: ExtractionModelPreference) => {
     setExtractionModelPref(newPref);
@@ -344,10 +353,82 @@ const App: React.FC = () => {
     setStatus({
       type: 'info',
       message: newPref.mode === 'auto'
-        ? 'Extraction Engine set to Auto Mode with full fallback chain.'
+        ? `Extraction Engine set to Auto Mode (${newPref.selectedModels.length} model${newPref.selectedModels.length === 1 ? '' : 's'} in dynamic cascade).`
         : newPref.mode === 'single'
         ? `Extraction Engine set to Single Model (${newPref.selectedModels[0] || 'gemini-3.6-flash'}).`
         : `Extraction Engine set to Multiple Models (${newPref.selectedModels.length} selected in custom cascade).`,
+    });
+  };
+
+  const handleFetchAvailableModels = async () => {
+    if (isFetchingModels) return;
+    setIsFetchingModels(true);
+    setFetchModelsFeedback(null);
+    try {
+      const res = await fetchAvailableGeminiModels(customApiKey || undefined);
+      if (res.success) {
+        setFetchedModels(res.models);
+        const msg = res.models.length > 0
+          ? `Fetched ${res.models.length} additional Gemini model${res.models.length === 1 ? '' : 's'} (${res.totalDiscovered} total compatible found).`
+          : `Connected to Gemini API (${res.totalDiscovered} compatible models found, all covered by built-in defaults).`;
+        setFetchModelsFeedback({ type: 'success', message: msg });
+        setStatus({ type: 'success', message: msg });
+      } else {
+        const errMsg = res.error || 'Failed to fetch Gemini models.';
+        setFetchModelsFeedback({ type: 'error', message: errMsg });
+        setStatus({ type: 'error', message: errMsg });
+      }
+    } catch (err: any) {
+      const errMsg = err?.message || 'Unexpected error while fetching models.';
+      setFetchModelsFeedback({ type: 'error', message: errMsg });
+      setStatus({ type: 'error', message: errMsg });
+    } finally {
+      setIsFetchingModels(false);
+    }
+  };
+
+  const handleClearFetchedModels = () => {
+    saveFetchedModels([]);
+    setFetchedModels([]);
+    setFetchModelsFeedback(null);
+    const defaultSet = new Set(AVAILABLE_EXTRACTION_MODELS.map((m) => m.name));
+    const remaining = extractionModelPref.selectedModels.filter((m) => defaultSet.has(m));
+    const nextModels = remaining.length > 0
+      ? remaining
+      : extractionModelPref.mode === 'single'
+      ? [AVAILABLE_EXTRACTION_MODELS[0].name]
+      : AVAILABLE_EXTRACTION_MODELS.map((m) => m.name);
+    handleUpdateModelPreference({
+      mode: extractionModelPref.mode,
+      selectedModels: nextModels,
+    });
+  };
+
+  const handleToggleOrSelectModel = (modelName: string) => {
+    if (extractionModelPref.mode === 'single') {
+      handleUpdateModelPreference({
+        mode: 'single',
+        selectedModels: [modelName],
+      });
+      return;
+    }
+
+    // Both 'auto' and 'multiple' support selecting/toggling any Default or Fetched model
+    const current = extractionModelPref.selectedModels || [];
+    let nextModels: string[];
+    if (current.includes(modelName)) {
+      if (current.length <= 1) {
+        setStatus({ type: 'warning', message: 'At least one model must remain active.' });
+        return;
+      }
+      nextModels = current.filter((m) => m !== modelName);
+    } else {
+      nextModels = [...current, modelName];
+    }
+
+    handleUpdateModelPreference({
+      mode: extractionModelPref.mode,
+      selectedModels: nextModels,
     });
   };
   
@@ -446,6 +527,7 @@ const App: React.FC = () => {
     captureMode: 'in-app',
   });
   const nativeCameraRef = useRef<NativeCameraShutterRef | null>(null);
+  const [isNativeCameraBusy, setIsNativeCameraBusy] = useState<boolean>(false);
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -3350,7 +3432,7 @@ const App: React.FC = () => {
     setPostCaptureCropperState({
       isOpen: true,
       imageSrc: photo.preview,
-      rawFile: photo.file,
+      rawFile: photo.file ?? null,
       pageIndex: stagedImages.length + 1,
       captureMode: 'native',
     });
@@ -3694,7 +3776,7 @@ const App: React.FC = () => {
     setPostCaptureCropperState({
       isOpen: true,
       imageSrc: photo.preview,
-      rawFile: photo.file,
+      rawFile: photo.file ?? null,
       pageIndex: stagedImages.length + 1,
       captureMode: 'native',
     });
@@ -3744,7 +3826,7 @@ const App: React.FC = () => {
         } else {
           setIsHighResCameraOpen(true);
         }
-      }, 300);
+      }, 50);
     }
   };
 
@@ -6438,17 +6520,17 @@ const App: React.FC = () => {
 
   return (
     <div className={`min-h-screen flex flex-col font-inter transition-colors duration-300 safe-area-bottom ${themeClasses[appTheme]}`} style={{ fontSize: `${appScale}%` }}>
-      <nav id="app-navbar" data-component="navbar" className="sticky top-0 z-40 safe-area-top px-2 sm:px-4 md:px-6 lg:px-8 py-1.5 sm:py-2.5 md:py-3 flex flex-row items-center justify-between gap-1 sm:gap-3 md:gap-4 shadow-xs backdrop-blur-xl bg-white/95 dark:bg-slate-900/95 border-b border-slate-200/80 dark:border-slate-800 transition-all no-print select-none">
-        {/* Component 1 (Left): Small App Icon with 'JC' written in short below it */}
+      <nav id="app-navbar" data-component="navbar" className="sticky top-0 z-40 safe-area-top px-3 sm:px-5 md:px-7 lg:px-8 py-3 sm:py-3.5 md:py-4 min-h-[72px] sm:min-h-[82px] flex flex-row items-center justify-between gap-2 sm:gap-3.5 md:gap-5 shadow-xs backdrop-blur-xl bg-white/95 dark:bg-slate-900/95 border-b border-slate-200/80 dark:border-slate-800 transition-all no-print select-none">
+        {/* Component 1 (Left): Brand App Icon with 'JC' written in short below it */}
         <div id="nav-brand-logo" className="flex flex-col items-center justify-center shrink-0 relative group">
            <div 
-             className="bg-gradient-to-br from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 p-1.5 sm:p-2 rounded-xl shadow-xs shadow-indigo-300/40 dark:shadow-none active:scale-95 hover:scale-105 transition-all cursor-pointer flex items-center justify-center ring-1 ring-indigo-400/30"
+             className="h-11 w-11 sm:h-12 sm:w-12 bg-gradient-to-br from-indigo-500 to-indigo-700 hover:from-indigo-600 hover:to-indigo-800 p-2.5 sm:p-3 rounded-2xl shadow-md shadow-indigo-300/40 dark:shadow-none active:scale-95 hover:scale-105 transition-all cursor-pointer flex items-center justify-center ring-1 ring-indigo-400/30"
              onClick={() => { setView('dashboard'); setCurrentFolderId(null); setSelectedFinalFolderIds([]); }}
              title="JC - Home / Dashboard"
              role="button"
              tabIndex={0}
            >
-             <CalculatorIcon className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
+             <CalculatorIcon className="h-6 w-6 sm:h-7 sm:w-7 text-white" />
            </div>
            <span 
              onClick={(e) => {
@@ -7338,10 +7420,15 @@ const App: React.FC = () => {
                                  <div className="grid grid-cols-3 gap-1.5 p-1 bg-gray-100 dark:bg-slate-900/80 rounded-xl border border-gray-200 dark:border-slate-700">
                                     <button
                                        type="button"
-                                       onClick={() => handleUpdateModelPreference({
-                                          mode: 'auto',
-                                          selectedModels: ['gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash']
-                                       })}
+                                       onClick={() => {
+                                          const current = extractionModelPref.selectedModels.length > 0
+                                             ? extractionModelPref.selectedModels
+                                             : AVAILABLE_EXTRACTION_MODELS.map((m) => m.name);
+                                          handleUpdateModelPreference({
+                                             mode: 'auto',
+                                             selectedModels: current
+                                          });
+                                       }}
                                        className={`py-2 px-2.5 rounded-lg font-bold text-xs flex flex-col sm:flex-row items-center justify-center gap-1 transition-all cursor-pointer ${
                                           extractionModelPref.mode === 'auto'
                                              ? 'bg-white dark:bg-indigo-600 text-indigo-600 dark:text-white shadow-xs font-black'
@@ -7391,132 +7478,265 @@ const App: React.FC = () => {
                                  </div>
                               </div>
 
-                              {/* Available Models List & Selector */}
-                              <div className="space-y-2 pt-1">
-                                 <div className="flex items-center justify-between">
-                                    <span className="text-[10px] font-bold text-gray-400 dark:text-slate-400 uppercase tracking-wider">
-                                       {extractionModelPref.mode === 'auto'
-                                          ? 'Cascade Priority (Automated Fallback Sequence)'
-                                          : extractionModelPref.mode === 'single'
-                                          ? 'Choose Dedicated Vision Model'
-                                          : 'Select Models for Custom Cascade (Click to toggle)'}
-                                    </span>
-                                    <span className="text-[10px] font-semibold text-gray-500 dark:text-slate-400">
-                                       {extractionModelPref.mode === 'auto'
-                                          ? '4/4 Active'
-                                          : extractionModelPref.mode === 'single'
-                                          ? '1 Selected'
-                                          : `${extractionModelPref.selectedModels.length}/${AVAILABLE_EXTRACTION_MODELS.length} Selected`}
-                                    </span>
+                              {/* Available Models List, Fetch Action & Selector */}
+                              <div className="space-y-3 pt-1">
+                                 <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex flex-col gap-0.5">
+                                       <span className="text-[10px] font-bold text-gray-400 dark:text-slate-400 uppercase tracking-wider">
+                                          {extractionModelPref.mode === 'auto'
+                                             ? 'Auto Cascade Models (Click any model to include/exclude)'
+                                             : extractionModelPref.mode === 'single'
+                                             ? 'Choose Dedicated Vision Model (Default or Fetched)'
+                                             : 'Select Models for Custom Cascade (Click to toggle)'}
+                                       </span>
+                                       <span className="text-[10px] font-semibold text-gray-500 dark:text-slate-400">
+                                          {extractionModelPref.mode === 'single'
+                                             ? `1 Selected (${extractionModelPref.selectedModels[0] || 'gemini-3.6-flash'})`
+                                             : `${extractionModelPref.selectedModels.length}/${AVAILABLE_EXTRACTION_MODELS.length + fetchedModels.length} Active`}
+                                       </span>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                       {(extractionModelPref.mode === 'auto' || extractionModelPref.mode === 'multiple') && fetchedModels.length > 0 && (
+                                          <>
+                                             <button
+                                                type="button"
+                                                onClick={() => handleUpdateModelPreference({
+                                                   mode: extractionModelPref.mode,
+                                                   selectedModels: AVAILABLE_EXTRACTION_MODELS.map((m) => m.name),
+                                                })}
+                                                className="px-2 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900 text-[10px] font-bold text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                                             >
+                                                Defaults Only
+                                             </button>
+                                             <button
+                                                type="button"
+                                                onClick={() => handleUpdateModelPreference({
+                                                   mode: extractionModelPref.mode,
+                                                   selectedModels: [
+                                                      ...AVAILABLE_EXTRACTION_MODELS.map((m) => m.name),
+                                                      ...fetchedModels.map((m) => m.name),
+                                                   ],
+                                                })}
+                                                className="px-2 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/40 text-[10px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-all cursor-pointer"
+                                             >
+                                                Include All
+                                             </button>
+                                          </>
+                                       )}
+
+                                       <button
+                                          type="button"
+                                          disabled={isFetchingModels}
+                                          onClick={handleFetchAvailableModels}
+                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-[11px] font-bold rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
+                                       >
+                                          <ArrowPathIcon className={`h-3.5 w-3.5 ${isFetchingModels ? 'animate-spin' : ''}`} />
+                                          <span>{isFetchingModels ? 'Fetching Models...' : 'Fetch Models'}</span>
+                                       </button>
+                                    </div>
                                  </div>
 
-                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    {AVAILABLE_EXTRACTION_MODELS.map((model, idx) => {
-                                       const isSingleSelected = extractionModelPref.mode === 'single' && (extractionModelPref.selectedModels[0] === model.name);
-                                       const isMultiSelected = extractionModelPref.mode === 'multiple' && extractionModelPref.selectedModels.includes(model.name);
-                                       const isAutoActive = extractionModelPref.mode === 'auto';
-                                       const isSelected = isAutoActive || isSingleSelected || isMultiSelected;
-                                       const sequenceIdx = extractionModelPref.selectedModels.indexOf(model.name);
+                                 {fetchModelsFeedback && (
+                                    <div className={`p-2.5 rounded-xl text-[11px] font-semibold flex items-center justify-between gap-2 ${
+                                       fetchModelsFeedback.type === 'success'
+                                          ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                          : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                                    }`}>
+                                       <div className="flex items-center gap-2 min-w-0">
+                                          {fetchModelsFeedback.type === 'success'
+                                             ? <CheckCircleIcon className="h-4 w-4 shrink-0" />
+                                             : <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />}
+                                          <span className="leading-snug">{fetchModelsFeedback.message}</span>
+                                       </div>
+                                       <button
+                                          type="button"
+                                          onClick={() => setFetchModelsFeedback(null)}
+                                          className="p-0.5 opacity-70 hover:opacity-100 cursor-pointer shrink-0"
+                                          aria-label="Dismiss fetch status"
+                                       >
+                                          <XMarkIcon className="h-3.5 w-3.5" />
+                                       </button>
+                                    </div>
+                                 )}
 
-                                       return (
-                                          <div
-                                             key={model.name}
-                                             onClick={() => {
-                                                if (extractionModelPref.mode === 'auto') {
-                                                   // Switch to single model on direct model card click
-                                                   handleUpdateModelPreference({
-                                                      mode: 'single',
-                                                      selectedModels: [model.name]
-                                                   });
-                                                } else if (extractionModelPref.mode === 'single') {
-                                                   handleUpdateModelPreference({
-                                                      mode: 'single',
-                                                      selectedModels: [model.name]
-                                                   });
-                                                } else if (extractionModelPref.mode === 'multiple') {
-                                                   let nextModels: string[];
-                                                   if (extractionModelPref.selectedModels.includes(model.name)) {
-                                                      if (extractionModelPref.selectedModels.length <= 1) {
-                                                         setStatus({ type: 'warning', message: 'At least one model must remain selected.' });
-                                                         return;
-                                                      }
-                                                      nextModels = extractionModelPref.selectedModels.filter(m => m !== model.name);
-                                                   } else {
-                                                      nextModels = [...extractionModelPref.selectedModels, model.name];
-                                                   }
-                                                   handleUpdateModelPreference({
-                                                      mode: 'multiple',
-                                                      selectedModels: nextModels
-                                                   });
-                                                }
-                                             }}
-                                             className={`p-3 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden select-none ${
-                                                isSelected
-                                                   ? 'bg-indigo-50/50 dark:bg-indigo-950/30 border-indigo-300 dark:border-indigo-600 shadow-xs'
-                                                   : 'bg-gray-50/70 dark:bg-slate-900/50 border-gray-200 dark:border-slate-800 opacity-60 hover:opacity-100'
-                                             }`}
-                                          >
-                                             <div className="flex items-start justify-between gap-2 mb-1">
-                                                <div className="flex items-center gap-1.5 min-w-0">
-                                                   {/* Selection Indicator */}
-                                                   {extractionModelPref.mode === 'single' ? (
-                                                      <span className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${
-                                                         isSingleSelected 
-                                                            ? 'bg-indigo-600 border-indigo-600 text-white' 
-                                                            : 'border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800'
-                                                      }`}>
-                                                         {isSingleSelected && <span className="h-1.5 w-1.5 rounded-full bg-white"></span>}
-                                                      </span>
-                                                   ) : extractionModelPref.mode === 'multiple' ? (
-                                                      <span className={`h-4 w-4 rounded-md border flex items-center justify-center shrink-0 text-[10px] font-black ${
-                                                         isMultiSelected 
-                                                            ? 'bg-indigo-600 border-indigo-600 text-white' 
-                                                            : 'border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800'
-                                                      }`}>
-                                                         {isMultiSelected ? (sequenceIdx >= 0 ? sequenceIdx + 1 : '✓') : ''}
-                                                      </span>
-                                                   ) : (
-                                                      <span className="h-4 w-4 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0 text-[9px] font-black">
-                                                         {idx + 1}
-                                                      </span>
-                                                   )}
+                                 {/* Default Built-In Models */}
+                                 <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                       <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                                          Default App Models ({AVAILABLE_EXTRACTION_MODELS.length})
+                                       </span>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                       {AVAILABLE_EXTRACTION_MODELS.map((model) => {
+                                          const isSingleSelected = extractionModelPref.mode === 'single' && (extractionModelPref.selectedModels[0] === model.name);
+                                          const sequenceIdx = extractionModelPref.selectedModels.indexOf(model.name);
+                                          const isChainSelected = (extractionModelPref.mode === 'auto' || extractionModelPref.mode === 'multiple') && sequenceIdx >= 0;
+                                          const isSelected = isSingleSelected || isChainSelected;
 
-                                                   <span className="font-mono font-bold text-xs text-slate-900 dark:text-white truncate">
-                                                      {model.name}
+                                          return (
+                                             <div
+                                                key={model.name}
+                                                onClick={() => handleToggleOrSelectModel(model.name)}
+                                                className={`p-3 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden select-none ${
+                                                   isSelected
+                                                      ? 'bg-indigo-50/50 dark:bg-indigo-950/30 border-indigo-300 dark:border-indigo-600 shadow-xs'
+                                                      : 'bg-gray-50/70 dark:bg-slate-900/50 border-gray-200 dark:border-slate-800 opacity-60 hover:opacity-100'
+                                                }`}
+                                             >
+                                                <div className="flex items-start justify-between gap-2 mb-1">
+                                                   <div className="flex items-center gap-1.5 min-w-0">
+                                                      {extractionModelPref.mode === 'single' ? (
+                                                         <span className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${
+                                                            isSingleSelected 
+                                                               ? 'bg-indigo-600 border-indigo-600 text-white' 
+                                                               : 'border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800'
+                                                         }`}>
+                                                            {isSingleSelected && <span className="h-1.5 w-1.5 rounded-full bg-white"></span>}
+                                                         </span>
+                                                      ) : (
+                                                         <span className={`h-4 w-4 rounded-md border flex items-center justify-center shrink-0 text-[10px] font-black ${
+                                                            isChainSelected 
+                                                               ? extractionModelPref.mode === 'auto'
+                                                                  ? 'bg-emerald-500 border-emerald-500 text-white'
+                                                                  : 'bg-indigo-600 border-indigo-600 text-white'
+                                                               : 'border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800'
+                                                         }`}>
+                                                            {isChainSelected ? sequenceIdx + 1 : ''}
+                                                         </span>
+                                                      )}
+
+                                                      <span className="font-mono font-bold text-xs text-slate-900 dark:text-white truncate">
+                                                         {model.name}
+                                                      </span>
+                                                   </div>
+
+                                                   <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${model.badgeColor}`}>
+                                                      {model.badge}
                                                    </span>
                                                 </div>
 
-                                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${model.badgeColor}`}>
-                                                   {model.badge}
-                                                </span>
-                                             </div>
+                                                <p className="text-[10px] text-gray-500 dark:text-slate-400 line-clamp-2 leading-tight pl-5">
+                                                   {model.description}
+                                                </p>
 
-                                             <p className="text-[10px] text-gray-500 dark:text-slate-400 line-clamp-2 leading-tight pl-5">
-                                                {model.description}
-                                             </p>
-
-                                             <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-slate-500 pt-1.5 pl-5">
-                                                <span>Speed: <strong className="text-slate-700 dark:text-slate-300 font-semibold">{model.speed}</strong></span>
-                                                {model.recommended && (
-                                                   <span className="text-indigo-600 dark:text-indigo-400 font-bold text-[9px]">★ Primary default</span>
-                                                )}
+                                                <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-slate-500 pt-1.5 pl-5">
+                                                   <span>Speed: <strong className="text-slate-700 dark:text-slate-300 font-semibold">{model.speed}</strong></span>
+                                                   {model.recommended && (
+                                                      <span className="text-indigo-600 dark:text-indigo-400 font-bold text-[9px]">★ Primary default</span>
+                                                   )}
+                                                </div>
                                              </div>
-                                          </div>
-                                       );
-                                    })}
+                                          );
+                                       })}
+                                    </div>
+                                 </div>
+
+                                 {/* Recently Fetched Available Gemini Models (Listed below Default Models) */}
+                                 <div className="space-y-2 pt-2 border-t border-dashed border-gray-200 dark:border-slate-700">
+                                    <div className="flex items-center justify-between">
+                                       <span className="text-[10px] font-bold text-cyan-700 dark:text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+                                          <span>Fetched Available Models ({fetchedModels.length})</span>
+                                       </span>
+                                       {fetchedModels.length > 0 && (
+                                          <button
+                                             type="button"
+                                             onClick={handleClearFetchedModels}
+                                             className="text-[10px] font-bold text-gray-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors cursor-pointer"
+                                          >
+                                             Clear Fetched
+                                          </button>
+                                       )}
+                                    </div>
+
+                                    {fetchedModels.length > 0 ? (
+                                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-0.5">
+                                          {fetchedModels.map((model) => {
+                                             const isSingleSelected = extractionModelPref.mode === 'single' && (extractionModelPref.selectedModels[0] === model.name);
+                                             const sequenceIdx = extractionModelPref.selectedModels.indexOf(model.name);
+                                             const isChainSelected = (extractionModelPref.mode === 'auto' || extractionModelPref.mode === 'multiple') && sequenceIdx >= 0;
+                                             const isSelected = isSingleSelected || isChainSelected;
+
+                                             return (
+                                                <div
+                                                   key={model.name}
+                                                   onClick={() => handleToggleOrSelectModel(model.name)}
+                                                   className={`p-3 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden select-none ${
+                                                      isSelected
+                                                         ? 'bg-cyan-50/60 dark:bg-cyan-950/30 border-cyan-400 dark:border-cyan-600 shadow-xs'
+                                                         : 'bg-gray-50/70 dark:bg-slate-900/50 border-gray-200 dark:border-slate-800 opacity-75 hover:opacity-100'
+                                                   }`}
+                                                >
+                                                   <div className="flex items-start justify-between gap-2 mb-1">
+                                                      <div className="flex items-center gap-1.5 min-w-0">
+                                                         {extractionModelPref.mode === 'single' ? (
+                                                            <span className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 ${
+                                                               isSingleSelected 
+                                                                  ? 'bg-cyan-600 border-cyan-600 text-white' 
+                                                                  : 'border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800'
+                                                            }`}>
+                                                               {isSingleSelected && <span className="h-1.5 w-1.5 rounded-full bg-white"></span>}
+                                                            </span>
+                                                         ) : (
+                                                            <span className={`h-4 w-4 rounded-md border flex items-center justify-center shrink-0 text-[10px] font-black ${
+                                                               isChainSelected 
+                                                                  ? extractionModelPref.mode === 'auto'
+                                                                     ? 'bg-emerald-500 border-emerald-500 text-white'
+                                                                     : 'bg-cyan-600 border-cyan-600 text-white'
+                                                                  : 'border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800'
+                                                            }`}>
+                                                               {isChainSelected ? sequenceIdx + 1 : ''}
+                                                            </span>
+                                                         )}
+
+                                                         <span className="font-mono font-bold text-xs text-slate-900 dark:text-white truncate" title={model.name}>
+                                                            {model.name}
+                                                         </span>
+                                                      </div>
+
+                                                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border shrink-0 ${model.badgeColor}`}>
+                                                         {model.badge}
+                                                      </span>
+                                                   </div>
+
+                                                   <p className="text-[10px] text-gray-500 dark:text-slate-400 line-clamp-2 leading-tight pl-5">
+                                                      {model.description}
+                                                   </p>
+
+                                                   <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-slate-500 pt-1.5 pl-5">
+                                                      <span>Speed: <strong className="text-slate-700 dark:text-slate-300 font-semibold">{model.speed}</strong></span>
+                                                      {model.inputTokenLimit ? (
+                                                         <span className="text-[9px] font-mono text-cyan-700 dark:text-cyan-400">
+                                                            {model.inputTokenLimit >= 1000000
+                                                               ? `${(model.inputTokenLimit / 1000000).toFixed(1).replace(/\.0$/, '')}M ctx`
+                                                               : `${Math.round(model.inputTokenLimit / 1000)}K ctx`}
+                                                         </span>
+                                                      ) : (
+                                                         <span className="text-[9px] text-cyan-600 dark:text-cyan-400 font-semibold">Live API</span>
+                                                      )}
+                                                   </div>
+                                                </div>
+                                             );
+                                          })}
+                                       </div>
+                                    ) : (
+                                       <div className="p-3 rounded-xl border border-dashed border-gray-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-900/40 text-center text-[11px] text-gray-500 dark:text-slate-400">
+                                          Click <strong className="text-indigo-600 dark:text-indigo-400">Fetch Models</strong> above to discover live Gemini models available on your API key and use them in Auto, Single, or Multi mode.
+                                       </div>
+                                    )}
                                  </div>
                               </div>
 
                               {/* Technical Status & Architecture Summary */}
                               <div className="pt-2 border-t border-gray-100 dark:border-slate-700 space-y-2">
-                                 <div className="flex items-center justify-between">
-                                    <span className="text-gray-500 dark:text-gray-400 font-medium">Active Model Configuration:</span>
-                                    <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-2 py-0.5 rounded-md text-[11px]">
-                                       {extractionModelPref.mode === 'auto'
-                                          ? 'gemini-3.6-flash (Auto Cascading)'
-                                          : extractionModelPref.mode === 'single'
+                                 <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <span className="text-gray-500 dark:text-gray-400 font-medium shrink-0">Active Model Configuration:</span>
+                                    <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-2 py-0.5 rounded-md text-[11px] max-w-full break-all text-right">
+                                       {extractionModelPref.mode === 'single'
                                           ? extractionModelPref.selectedModels[0] || 'gemini-3.6-flash'
-                                          : `${extractionModelPref.selectedModels.join(' ➔ ')}`}
+                                          : extractionModelPref.mode === 'auto'
+                                          ? `Auto: ${extractionModelPref.selectedModels.join(' ➔ ')}`
+                                          : extractionModelPref.selectedModels.join(' ➔ ')}
                                     </span>
                                  </div>
 
@@ -8145,11 +8365,11 @@ const App: React.FC = () => {
           /* ============================================================ */
           <div
             id="image-capture-studio-page"
-            className="fixed inset-0 z-50 flex flex-col bg-slate-950 text-slate-100 animate-in fade-in duration-200 overflow-hidden"
+            className="fixed inset-0 h-[100dvh] z-50 flex flex-col bg-slate-950 text-slate-100 animate-in fade-in duration-200 overflow-hidden"
           >
             {/* Streamlined Studio Header (Responsive for Mobile, Tablet & PC) */}
-            <header className="shrink-0 flex items-center justify-between px-3 sm:px-5 md:px-6 py-2.5 sm:py-3 bg-slate-900/95 backdrop-blur-md border-b border-slate-800/90 z-30 gap-2 sm:gap-4">
-              <div className="flex items-center gap-1.5 sm:gap-2.5 md:gap-3 min-w-0">
+            <header className="shrink-0 flex flex-wrap sm:flex-nowrap items-center justify-between px-3 sm:px-5 md:px-6 py-2 sm:py-3 bg-slate-900/95 backdrop-blur-md border-b border-slate-800/90 z-30 gap-x-2 gap-y-2 sm:gap-4">
+              <div className="flex items-center justify-between sm:justify-start gap-1.5 sm:gap-2.5 md:gap-3 w-full sm:w-auto min-w-0">
                 <button
                   type="button"
                   onClick={() => setIsUploadModalOpen(false)}
@@ -8200,16 +8420,15 @@ const App: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Manifest Wise Badge with Tap Guidance */}
-                <div className="relative inline-block shrink-0">
+                {/* Manifest Wise Badge with Tap Guidance (Hidden on Mobile to prevent header crowding) */}
+                <div className="relative hidden sm:inline-block shrink-0">
                   <span
                     onClick={triggerManifestComment}
                     onTouchStart={triggerManifestComment}
-                    className="text-[10px] font-black bg-indigo-950/70 hover:bg-indigo-900/90 text-indigo-300 border border-indigo-800/80 px-2 sm:px-2.5 py-1 rounded-full cursor-pointer transition-all inline-flex items-center gap-1 select-none active:scale-95 shadow-xs"
+                    className="text-[10px] font-black bg-indigo-950/70 hover:bg-indigo-900/90 text-indigo-300 border border-indigo-800/80 px-2 sm:px-2.5 py-1 rounded-full cursor-pointer transition-all hidden sm:inline-flex items-center gap-1 select-none active:scale-95 shadow-xs"
                     title="Touch to view guidance"
                   >
-                    <span className="hidden sm:inline">Manifest Wise</span>
-                    <span className="sm:hidden">1 Manifest</span>
+                    <span>Manifest Wise</span>
                     <InformationCircleIcon className="h-3 w-3 text-indigo-400" />
                   </span>
 
@@ -8242,19 +8461,19 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* Right: Captured Pages Vault, AI Mode Toggle & Close Button */}
-              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {/* Right / Mobile Lower Row: Captured Pages Vault, AI Mode Toggle & Close Button */}
+              <div className="flex items-center justify-between sm:justify-end gap-1.5 sm:gap-2 w-full sm:w-auto pt-1.5 sm:pt-0 border-t border-slate-800/80 sm:border-t-0 shrink-0">
                 {/* Captured Manifest Pages Local Vault Button */}
                 <button
                   id="open-captured-sessions-vault-btn"
                   type="button"
                   onClick={() => setIsCapturedSessionsModalOpen(true)}
-                  className="relative inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-750 text-slate-200 hover:text-white border border-slate-700/90 text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-xs"
+                  className="relative inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-750 text-slate-200 hover:text-white border border-slate-700/90 text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-xs shrink-0"
                   title="Open Local Storage of Captured Manifest Pages"
                 >
                   <DocumentDuplicateIcon className="h-4 w-4 text-indigo-400" />
                   <span className="hidden md:inline">Captured Pages</span>
-                  <span className="hidden sm:inline md:hidden">Vault</span>
+                  <span className="md:hidden">Vault</span>
                   {capturedSessionsStats.total > 0 && (
                     <span
                       className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-black ${
@@ -8317,12 +8536,19 @@ const App: React.FC = () => {
             </header>
 
             {/* Studio Main Workspace (Optimized for Mobile, Tablet & PC) */}
-            <main className="flex-1 overflow-y-auto px-2.5 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 flex flex-col items-center justify-start md:justify-center relative min-h-0">
+            <main className="flex-1 overflow-y-auto px-2.5 sm:px-4 md:px-6 pt-3 pb-4 sm:py-4 flex flex-col items-center justify-start md:justify-center relative min-h-0">
               {/* Headless Native Camera Shutter Ref & Inputs */}
               <NativeCameraShutter
                 ref={nativeCameraRef}
                 onPhotoCaptured={handleNativePhotoCaptured}
                 onBeforeCapture={handleBeforeCameraCapture}
+                onCapturingChange={setIsNativeCameraBusy}
+                onError={(err) =>
+                  setStatus({
+                    type: 'error',
+                    message: err.message || 'Unable to open native camera. Please check camera permissions.',
+                  })
+                }
                 headless
               />
               <input
@@ -8347,7 +8573,7 @@ const App: React.FC = () => {
 
               {isCameraScannerOpen ? (
                 /* CASE 1: Sequential Camera Scanner View with Full Screen Space */
-                <div className="w-full max-w-2xl bg-slate-900 text-white rounded-2xl sm:rounded-3xl p-3.5 sm:p-5 md:p-6 border border-slate-800 shadow-2xl space-y-2.5 sm:space-y-3.5 animate-in fade-in zoom-in-95 duration-200 my-auto shrink-0">
+                <div className="w-full max-w-2xl bg-slate-900 text-white rounded-2xl sm:rounded-3xl p-3.5 sm:p-5 md:p-6 border border-slate-800 shadow-2xl space-y-2.5 sm:space-y-3.5 animate-in fade-in zoom-in-95 duration-200 md:my-auto shrink-0">
                   {/* Header */}
                   <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
                     <div className="flex items-center gap-2 sm:gap-2.5">
@@ -8588,7 +8814,7 @@ const App: React.FC = () => {
                 </div>
               ) : (
                 /* CASE 2: Adaptive Multi-Device Capture Studio (Mobile Stack, Tablet/PC 2x2 Grid) */
-                <div className="w-full max-w-3xl lg:max-w-4xl flex flex-col items-center gap-2 sm:gap-3 md:gap-3.5 my-auto shrink-0 animate-in fade-in zoom-in-95 duration-200">
+                <div className="w-full max-w-3xl lg:max-w-4xl flex flex-col items-center gap-2 sm:gap-3 md:gap-3.5 md:my-auto shrink-0 animate-in fade-in zoom-in-95 duration-200">
                   {/* Studio Hero Header & Quick Guidance */}
                   <div className="w-full text-center space-y-0.5 sm:space-y-1 px-1 shrink-0">
                     <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[10px] sm:text-xs font-semibold">
@@ -8653,7 +8879,11 @@ const App: React.FC = () => {
                     >
                       <div className="flex items-center gap-2.5 sm:gap-3 text-left min-w-0">
                         <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-purple-600/20 text-purple-400 border border-purple-500/30 flex items-center justify-center shrink-0 group-hover:scale-105 group-hover:bg-purple-600 group-hover:text-white transition-all shadow-xs">
-                          <CameraIcon className="h-5 w-5" />
+                          {isNativeCameraBusy ? (
+                            <ArrowPathIcon className="h-5 w-5 animate-spin" />
+                          ) : (
+                            <CameraIcon className="h-5 w-5" />
+                          )}
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
@@ -8665,13 +8895,15 @@ const App: React.FC = () => {
                             </span>
                           </div>
                           <p className="text-[10px] sm:text-[11px] text-slate-400 truncate sm:whitespace-normal mt-0.5">
-                            Opens phone's actual camera app with hardware HDR.
+                            {isNativeCameraBusy
+                              ? 'Launching phone native camera...'
+                              : "Opens phone's actual camera app with hardware HDR."}
                           </p>
                         </div>
                       </div>
                       <span className="shrink-0 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-[11px] sm:text-xs font-bold transition-colors shadow-md shadow-purple-900/30">
-                        <span className="hidden sm:inline">Open Native</span>
-                        <span className="sm:hidden">Native</span>
+                        <span className="hidden sm:inline">{isNativeCameraBusy ? 'Opening...' : 'Open Native'}</span>
+                        <span className="sm:hidden">{isNativeCameraBusy ? 'Opening...' : 'Native'}</span>
                       </span>
                     </button>
 
@@ -8752,7 +8984,7 @@ const App: React.FC = () => {
                   /* Minimized Docked Bar (Mobile, Tablet & PC Adaptive) */
                   <div
                     onClick={() => setIsManifestQueueExpanded(true)}
-                    className="bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-3 sm:px-6 py-2.5 sm:py-3.5 shadow-2xl cursor-pointer hover:bg-slate-850 transition-all select-none"
+                    className="bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-3 sm:px-6 pt-2.5 sm:pt-3.5 pb-[max(0.75rem,calc(env(safe-area-inset-bottom,0px)+0.625rem))] shadow-2xl cursor-pointer hover:bg-slate-850 transition-all select-none"
                   >
                     <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
                       {/* Mini stacked preview thumbnails */}
@@ -8815,7 +9047,7 @@ const App: React.FC = () => {
                   </div>
                 ) : (
                   /* Expanded Review Drawer (Mobile, Tablet & PC Adaptive) */
-                  <div className="bg-slate-900 border-t border-slate-700/90 shadow-2xl rounded-t-3xl p-3.5 sm:p-5 md:p-6 flex flex-col gap-4 max-h-[75vh] sm:max-h-[65vh] overflow-y-auto animate-in slide-in-from-bottom-4 duration-200">
+                  <div className="bg-slate-900 border-t border-slate-700/90 shadow-2xl rounded-t-3xl px-3.5 sm:px-5 md:px-6 pt-3.5 sm:pt-5 md:pt-6 pb-[max(1rem,calc(env(safe-area-inset-bottom,0px)+0.75rem))] flex flex-col gap-4 max-h-[75vh] sm:max-h-[65vh] overflow-y-auto animate-in slide-in-from-bottom-4 duration-200">
                     <div className="max-w-5xl mx-auto w-full flex flex-col gap-3.5 sm:gap-4">
                       {/* Header: Tap to Collapse */}
                       <div

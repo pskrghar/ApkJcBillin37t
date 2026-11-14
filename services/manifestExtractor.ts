@@ -4,6 +4,7 @@ import { reconcileImportedRows } from "../utils/serialNumberManager";
 
 export const CUSTOM_API_KEY_STORAGE = "SMARTBILLING_GEMINI_API_KEY";
 export const EXTRACTION_MODEL_PREF_STORAGE = "SMARTBILLING_EXTRACTION_MODEL_PREF";
+export const FETCHED_MODELS_STORAGE = "SMARTBILLING_FETCHED_GEMINI_MODELS";
 
 export type ExtractionEngineMode = 'auto' | 'single' | 'multiple';
 
@@ -12,7 +13,21 @@ export interface ExtractionModelPreference {
   selectedModels: string[]; // List of model names to use in order
 }
 
-export const AVAILABLE_EXTRACTION_MODELS = [
+export interface ExtractionModelSpec {
+  name: string;
+  shortLabel: string;
+  badge: string;
+  badgeColor: string;
+  tierLabel: string;
+  description: string;
+  speed: string;
+  recommended: boolean;
+  isFetched?: boolean;
+  inputTokenLimit?: number;
+  outputTokenLimit?: number;
+}
+
+export const AVAILABLE_EXTRACTION_MODELS: ExtractionModelSpec[] = [
   {
     name: "gemini-3.6-flash",
     shortLabel: "3.6 Flash (Recommended)",
@@ -57,8 +72,41 @@ export const AVAILABLE_EXTRACTION_MODELS = [
 
 export const DEFAULT_MODEL_PREFERENCE: ExtractionModelPreference = {
   mode: 'auto',
-  selectedModels: ['gemini-3.6-flash'],
+  selectedModels: AVAILABLE_EXTRACTION_MODELS.map((m) => m.name),
 };
+
+export function getSavedFetchedModels(): ExtractionModelSpec[] {
+  if (typeof window !== "undefined") {
+    try {
+      const raw = localStorage.getItem(FETCHED_MODELS_STORAGE);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((m) => m && typeof m.name === "string" && m.name.trim().length > 0);
+        }
+      }
+    } catch (e) {}
+  }
+  return [];
+}
+
+export function saveFetchedModels(models: ExtractionModelSpec[]): void {
+  if (typeof window !== "undefined") {
+    try {
+      if (models.length > 0) {
+        localStorage.setItem(FETCHED_MODELS_STORAGE, JSON.stringify(models));
+      } else {
+        localStorage.removeItem(FETCHED_MODELS_STORAGE);
+      }
+    } catch (e) {}
+  }
+}
+
+export function getAllKnownExtractionModels(): ExtractionModelSpec[] {
+  const defaultNames = new Set(AVAILABLE_EXTRACTION_MODELS.map((m) => m.name));
+  const fetched = getSavedFetchedModels().filter((m) => !defaultNames.has(m.name));
+  return [...AVAILABLE_EXTRACTION_MODELS, ...fetched];
+}
 
 export function getExtractionModelPreference(): ExtractionModelPreference {
   if (typeof window !== "undefined") {
@@ -67,12 +115,18 @@ export function getExtractionModelPreference(): ExtractionModelPreference {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && (parsed.mode === 'auto' || parsed.mode === 'single' || parsed.mode === 'multiple')) {
-          const validModels = (parsed.selectedModels || []).filter((m: string) =>
-            AVAILABLE_EXTRACTION_MODELS.some((am) => am.name === m)
+          const knownNames = new Set(getAllKnownExtractionModels().map((m) => m.name));
+          const validModels = (parsed.selectedModels || []).filter(
+            (m: string) => typeof m === 'string' && m.trim().length > 0 && (knownNames.has(m) || m.startsWith('gemini-'))
           );
           return {
             mode: parsed.mode,
-            selectedModels: validModels.length > 0 ? validModels : ['gemini-3.6-flash'],
+            selectedModels:
+              validModels.length > 0
+                ? validModels
+                : parsed.mode === 'auto'
+                ? AVAILABLE_EXTRACTION_MODELS.map((m) => m.name)
+                : ['gemini-3.6-flash'],
           };
         }
       }
@@ -146,6 +200,132 @@ export async function testGeminiApiKey(apiKey: string): Promise<{ success: boole
       return { success: false, message: "Rate limit reached (429). The key is valid but quota is exhausted." };
     }
     return { success: false, message: `Connection test failed: ${errMsg}` };
+  }
+}
+
+export async function fetchAvailableGeminiModels(customApiKeyOverride?: string): Promise<{
+  success: boolean;
+  models: ExtractionModelSpec[];
+  totalDiscovered: number;
+  error?: string;
+}> {
+  try {
+    const apiKey = getEffectiveGeminiApiKey(customApiKeyOverride);
+    if (!apiKey) {
+      return {
+        success: false,
+        models: [],
+        totalDiscovered: 0,
+        error: "No API key configured. Enter a Gemini API key above or ensure the system key is set.",
+      };
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    const pager = await ai.models.list({ config: { pageSize: 100 } });
+
+    const defaultNames = new Set(AVAILABLE_EXTRACTION_MODELS.map((m) => m.name));
+    const discoveredAll: ExtractionModelSpec[] = [];
+    const seen = new Set<string>();
+    let safetyCount = 0;
+
+    for await (const rawModel of pager) {
+      if (safetyCount++ > 200) break;
+      const modelId = (rawModel.name || "").replace(/^models\//, "").trim();
+      if (!modelId || seen.has(modelId)) continue;
+
+      const lower = modelId.toLowerCase();
+      // Only include Gemini text/vision models supporting generateContent
+      if (!lower.includes("gemini")) continue;
+      if (
+        lower.includes("embedding") ||
+        lower.includes("aqa") ||
+        lower.includes("imagen") ||
+        lower.includes("veo") ||
+        lower.includes("lyria") ||
+        lower.includes("-tts") ||
+        lower.includes("transcribe") ||
+        lower.includes("live") ||
+        lower.includes("robotics")
+      ) {
+        continue;
+      }
+
+      if (
+        Array.isArray(rawModel.supportedActions) &&
+        rawModel.supportedActions.length > 0 &&
+        !rawModel.supportedActions.includes("generateContent")
+      ) {
+        continue;
+      }
+
+      seen.add(modelId);
+
+      const isPro = lower.includes("pro") || lower.includes("argon") || lower.includes("carbon");
+      const isLite = lower.includes("lite");
+      const isPreview = lower.includes("preview") || lower.includes("exp");
+
+      const badge = isPro
+        ? "Pro / High Precision"
+        : isLite
+        ? "Lite / Fast"
+        : isPreview
+        ? "Fetched Preview"
+        : "Fetched Live";
+
+      const badgeColor = isPro
+        ? "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300 border-violet-200 dark:border-violet-800"
+        : isLite
+        ? "bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300 border-teal-200 dark:border-teal-800"
+        : isPreview
+        ? "bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300 border-sky-200 dark:border-sky-800"
+        : "bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800";
+
+      discoveredAll.push({
+        name: modelId,
+        shortLabel: rawModel.displayName || modelId,
+        badge,
+        badgeColor,
+        tierLabel: `${rawModel.displayName || modelId} (${modelId})`,
+        description:
+          (rawModel.description || "").trim() ||
+          "Live Gemini vision/text model fetched from your Google AI Studio account.",
+        speed: isLite ? "Ultra-fast" : lower.includes("flash") ? "Fast" : "Balanced",
+        recommended: false,
+        isFetched: true,
+        inputTokenLimit: rawModel.inputTokenLimit,
+        outputTokenLimit: rawModel.outputTokenLimit,
+      });
+    }
+
+    // Exclude the 4 built-in defaults so the fetched list below has no duplicate cards
+    const fetchedExtras = discoveredAll
+      .filter((m) => !defaultNames.has(m.name))
+      .sort((a, b) => b.name.localeCompare(a.name));
+
+    saveFetchedModels(fetchedExtras);
+
+    return {
+      success: true,
+      models: fetchedExtras,
+      totalDiscovered: discoveredAll.length,
+    };
+  } catch (error: any) {
+    console.error("Fetch Gemini Models Error:", error);
+    const errMsg = error?.message || error?.toString() || "Unknown error";
+    if (errMsg.includes("403") || errMsg.includes("API_KEY_INVALID") || errMsg.includes("401")) {
+      return {
+        success: false,
+        models: [],
+        totalDiscovered: 0,
+        error: "Invalid or unauthorized API key. Please check your Gemini API key above.",
+      };
+    }
+    return {
+      success: false,
+      models: [],
+      totalDiscovered: 0,
+      error: `Failed to fetch models: ${errMsg}`,
+    };
   }
 }
 
@@ -350,23 +530,41 @@ export async function extractManifestWithFallback(
     throw new DOMException("Extraction stopped by user", "AbortError");
   }
 
-  // Determine effective model execution sequence based on preferences
+  // Determine effective model execution sequence based on preferences (supports Default + Fetched models)
   const pref = modelPrefOverride || getExtractionModelPreference();
-  let executionModels: typeof AVAILABLE_EXTRACTION_MODELS = [];
+  const allKnownModels = getAllKnownExtractionModels();
+  const resolveModelSpec = (modelName: string): ExtractionModelSpec => {
+    const found = allKnownModels.find((m) => m.name === modelName);
+    if (found) return found;
+    return {
+      name: modelName,
+      shortLabel: modelName,
+      badge: "Fetched Live",
+      badgeColor: "bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800",
+      tierLabel: `Live Gemini Model (${modelName})`,
+      description: "Live model fetched from Gemini API",
+      speed: "Fast",
+      recommended: false,
+      isFetched: true,
+    };
+  };
+
+  let executionModels: ExtractionModelSpec[] = [];
 
   if (pref.mode === 'single') {
-    const chosenName = pref.selectedModels[0] || 'gemini-3.6-flash';
-    const found = AVAILABLE_EXTRACTION_MODELS.find((m) => m.name === chosenName);
-    executionModels = [found || AVAILABLE_EXTRACTION_MODELS[0]];
+    const chosenName = pref.selectedModels[0] || AVAILABLE_EXTRACTION_MODELS[0].name;
+    executionModels = [resolveModelSpec(chosenName)];
   } else if (pref.mode === 'multiple') {
-    const selected = pref.selectedModels || [];
-    executionModels = AVAILABLE_EXTRACTION_MODELS.filter((m) => selected.includes(m.name));
+    const selected = (pref.selectedModels || []).filter(Boolean);
+    executionModels = selected.map(resolveModelSpec);
     if (executionModels.length === 0) {
       executionModels = [AVAILABLE_EXTRACTION_MODELS[0]];
     }
   } else {
-    // 'auto' mode: all available models in standard cascade hierarchy
-    executionModels = [...AVAILABLE_EXTRACTION_MODELS];
+    // 'auto' mode: uses user-configured cascade (including any fetched models) or full default chain
+    const selected = (pref.selectedModels || []).filter(Boolean);
+    executionModels =
+      selected.length > 0 ? selected.map(resolveModelSpec) : [...AVAILABLE_EXTRACTION_MODELS];
   }
 
   const apiKey = getEffectiveGeminiApiKey(customApiKey);

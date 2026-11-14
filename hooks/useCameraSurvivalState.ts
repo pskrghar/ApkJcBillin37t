@@ -184,16 +184,38 @@ export async function markAwaitingCamera(params: {
 }): Promise<void> {
   if (typeof window !== 'undefined') {
     try {
-      if (window.sessionStorage) window.sessionStorage.setItem(SESSION_AWAITING_KEY, 'true');
-      if (window.localStorage) window.localStorage.setItem(SESSION_AWAITING_KEY, 'true');
+      const metaPayload = JSON.stringify({
+        activeFolderId: params.activeFolderId || null,
+        isUploadModalOpen: params.isUploadModalOpen ?? true,
+        filesCount: params.stagedFiles.length,
+        timestamp: Date.now(),
+      });
+      if (window.sessionStorage) {
+        window.sessionStorage.setItem(SESSION_AWAITING_KEY, 'true');
+        window.sessionStorage.setItem(SESSION_META_KEY, metaPayload);
+      }
+      if (window.localStorage) {
+        window.localStorage.setItem(SESSION_AWAITING_KEY, 'true');
+        window.localStorage.setItem(SESSION_META_KEY, metaPayload);
+      }
     } catch (e) {}
   }
-  await persistActiveBatchState({
-    stagedFiles: params.stagedFiles,
-    activeFolderId: params.activeFolderId,
-    isUploadModalOpen: params.isUploadModalOpen ?? true,
-    awaitingCamera: true,
-  });
+
+  // Update lightweight session flag in IndexedDB without re-serializing all staged blobs
+  try {
+    const db = await openSurvivalDB();
+    const tx = db.transaction([META_STORE], 'readwrite');
+    tx.objectStore(META_STORE).put({
+      key: 'session_state',
+      awaitingCamera: true,
+      activeFolderId: params.activeFolderId || null,
+      isUploadModalOpen: params.isUploadModalOpen ?? true,
+      hasPendingCropper: false,
+      timestamp: Date.now(),
+    });
+  } catch (err) {
+    console.warn('[useCameraSurvivalState] Lightweight awaiting flag warning:', err);
+  }
 }
 
 /**
@@ -373,15 +395,15 @@ export function useCameraSurvivalState(options: UseCameraSurvivalOptions = {}) {
             const pathUri = photoResult.webPath || photoResult.path;
 
             if (pathUri) {
-              try {
-                const response = await fetch(pathUri);
-                const blob = await response.blob();
-                const optimized = await optimizePhotoForOcr(blob, 'manifest_restored_hdr');
-                if (isMounted) {
-                  options.onRestoredCameraPhoto?.(optimized);
-                }
-              } catch (fetchErr) {
-                console.error('[useCameraSurvivalState] Error converting restored photo path:', fetchErr);
+              if (isMounted) {
+                options.onRestoredCameraPhoto?.({
+                  file: null,
+                  preview: pathUri,
+                  width: 0,
+                  height: 0,
+                  sizeBytes: 0,
+                  isDirectUri: true,
+                });
               }
             } else if (photoResult.base64String) {
               try {

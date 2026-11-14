@@ -455,3 +455,69 @@ html, body {
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+
+/* Cropper Photo-Loading Sand Hourglass Animation */
+@keyframes hourglassFlipCycle {
+  0%, 78% {
+    transform: rotate(0deg);
+  }
+  96%, 100% {
+    transform: rotate(180deg);
+  }
+}
+
+@keyframes hourglassSandTop {
+  0% {
+    transform: scaleY(1);
+  }
+  76%, 100% {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes hourglassSandBottom {
+  0% {
+    transform: scaleY(0);
+  }
+  76%, 100% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes hourglassSandStream {
+  0% {
+    opacity: 0;
+    stroke-dashoffset: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  74% {
+    opacity: 1;
+    stroke-dashoffset: -36;
+  }
+  78%, 100% {
+    opacity: 0;
+    stroke-dashoffset: -36;
+  }
+}
+
+.animate-hourglass-flip {
+  transform-origin: 32px 40px;
+  animation: hourglassFlipCycle 2.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.animate-hourglass-sand-top {
+  transform-origin: 32px 39px;
+  animation: hourglassSandTop 2.6s linear infinite;
+}
+
+.animate-hourglass-sand-bottom {
+  transform-origin: 32px 68px;
+  animation: hourglassSandBottom 2.6s linear infinite;
+}
+
+.animate-hourglass-stream {
+  animation: hourglassSandStream 2.6s linear infinite;
+}
+
